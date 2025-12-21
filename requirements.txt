@@ -6,7 +6,7 @@ langchain-pinecone
 langchain-huggingface
 python-dotenv
 pypdf
-pinecone-client
+pinecone
 sentence-transformers
 sqlalchemy
 psycopg2-binary
