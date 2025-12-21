@@ -1,0 +1,7 @@
+[theme]
+base = "light"
+primaryColor = "#1e3a8a"  # Navy Blue (Legal Trust)
+backgroundColor = "#f0f2f6"  # Light Grey (Background)
+secondaryBackgroundColor = "#ffffff"  # White (Sidebar/Cards)
+textColor = "#1e293b"  # Slate Dark (Text)
+font = "sans serif"
