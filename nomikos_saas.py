@@ -27,36 +27,102 @@ SESSION_FILE = "active_sessions.json"
 def local_css():
     st.markdown("""
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600&family=Playfair+Display:wght@700&display=swap');
-        .stApp { background: linear-gradient(135deg, #f0f4f8 0%, #d9e2ec 100%); font-family: 'Inter', sans-serif; }
-        h1, h2, h3 { font-family: 'Playfair Display', serif !important; color: #1e3a8a !important; font-weight: 700; }
-        [data-testid="stSidebar"] { background-color: #0f172a; border-right: 1px solid #334155; }
-        [data-testid="stSidebar"] .stMarkdown h1, [data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3 { color: #f8fafc !important; }
-        [data-testid="stSidebar"] p, [data-testid="stSidebar"] span { color: #94a3b8 !important; }
-        div.stButton > button { background: #1e3a8a; color: white !important; border-radius: 8px; border: none; font-weight: 600; }
-        div.stButton > button:hover { background: #172554; }
-        .stTextInput input { border: 1px solid #cbd5e1; border-radius: 6px; }
-        .stTabs [data-baseweb="tab-list"] { gap: 8px; background-color: #ffffff; padding: 10px; border-radius: 10px; }
-        .stTabs [aria-selected="true"] { background-color: #eff6ff !important; color: #1e3a8a !important; }
+        @import url('[https://fonts.googleapis.com/css2?family=Inter:wght@400;600&family=Playfair+Display:wght@700&display=swap](https://fonts.googleapis.com/css2?family=Inter:wght@400;600&family=Playfair+Display:wght@700&display=swap)');
+
+        /* ANIMATIONS */
+        @keyframes fadeIn {
+            0% { opacity: 0; transform: translateY(10px); }
+            100% { opacity: 1; transform: translateY(0); }
+        }
+
+        /* 1. Main Background */
+        .stApp {
+            background: linear-gradient(135deg, #f0f4f8 0%, #d9e2ec 100%);
+            font-family: 'Inter', sans-serif;
+        }
+        
+        /* 2. Tab Content Animation */
+        .stTabs [data-baseweb="tab-panel"] {
+            animation: fadeIn 0.4s ease-in-out;
+        }
+
+        /* 3. Headers */
+        h1, h2, h3 {
+            font-family: 'Playfair Display', serif !important;
+            color: #1e3a8a !important;
+            font-weight: 700;
+        }
+        
+        /* 4. Cards */
+        [data-testid="stVerticalBlock"] > [style*="flex-direction: column;"] > [data-testid="stVerticalBlock"] {
+            background-color: #ffffff;
+            padding: 25px;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+            border: 1px solid #e2e8f0;
+        }
+
+        /* 5. Sidebar */
+        [data-testid="stSidebar"] {
+            background-color: #0f172a;
+            border-right: 1px solid #334155;
+        }
+        [data-testid="stSidebar"] h1, [data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3 {
+            color: #f8fafc !important;
+        }
+        [data-testid="stSidebar"] p, [data-testid="stSidebar"] span {
+            color: #94a3b8 !important;
+        }
+
+        /* 6. Buttons */
+        div.stButton > button {
+            background: linear-gradient(to bottom, #1e3a8a, #1e40af);
+            color: white !important;
+            border: none;
+            border-radius: 8px;
+            padding: 0.6rem 1.2rem;
+            font-weight: 600;
+            width: 100%;
+            box-shadow: 0 4px 6px rgba(30, 58, 138, 0.2);
+        }
+        div.stButton > button:hover {
+            transform: translateY(-2px);
+        }
+
+        /* 7. Inputs */
+        .stTextInput input, .stDateInput input, .stNumberInput input, .stTextArea textarea {
+            border: 1px solid #cbd5e1;
+            border-radius: 6px;
+            padding: 10px;
+        }
+        .stTabs [data-baseweb="tab-list"] {
+            gap: 8px;
+            background-color: #ffffff;
+            padding: 10px;
+            border-radius: 10px;
+        }
+        .stTabs [aria-selected="true"] {
+            background-color: #eff6ff !important;
+            color: #1e3a8a !important;
+        }
     </style>
     """, unsafe_allow_html=True)
 
 # --- 1. DATABASE & AUTH FUNCTIONS ---
-# Global variable to store connection error for display
 if "db_error" not in st.session_state:
     st.session_state.db_error = None
 
 def get_db_connection():
     if "DATABASE_URL" in st.secrets:
         try:
+            # Create engine
             engine = create_engine(st.secrets["DATABASE_URL"])
-            # Test connection immediately
+            # Test connection
             with engine.connect() as conn:
                 conn.execute(text("SELECT 1"))
-            st.session_state.db_error = None # Clear error if success
+            st.session_state.db_error = None
             return engine
         except Exception as e:
-            # Capture error to show in Sidebar
             st.session_state.db_error = str(e)
             return None
     return None
@@ -71,6 +137,7 @@ def load_user_data(username):
             with engine.connect() as conn:
                 result = conn.execute(text("SELECT * FROM users WHERE username = :u"), {"u": username}).fetchone()
                 if result:
+                    # Adjust indices: username=0, password_hash=1, firm_name=2, role=3
                     return {"pass": result[1], "firm_id": result[2], "role": result[3]}
         except: pass
     
@@ -79,9 +146,7 @@ def load_user_data(username):
         with open(USER_DB_FILE, 'w') as f: json.dump(default, f)
         return default.get(username)
     try:
-        with open(USER_DB_FILE, 'r') as f:
-            users = json.load(f)
-            return users.get(username)
+        with open(USER_DB_FILE, 'r') as f: return json.load(f).get(username)
     except: return None
 
 def create_user(username, password, firm_name):
@@ -159,16 +224,15 @@ def login_page():
         with st.container():
             st.markdown("<h1 style='text-align: center;'>⚖️ Νομικός Cloud</h1>", unsafe_allow_html=True)
             
-            # --- UPDATED DIAGNOSTIC ---
+            # --- DB DIAGNOSTIC ---
             engine = get_db_connection()
             if engine:
                 st.success("🟢 Συνδέθηκε με Βάση Δεδομένων (Cloud)")
             else:
                 st.warning("🟠 Λειτουργία Χωρίς Βάση (Local Mode)")
                 if st.session_state.db_error:
-                    # Show the actual error so we can fix it!
-                    st.error(f"SQL Error: {st.session_state.db_error}")
-            # --------------------------
+                    st.caption(f"Error: {st.session_state.db_error}")
+            # ---------------------
 
             tab1, tab2 = st.tabs(["Σύνδεση", "Εγγραφή"])
             with tab1:
@@ -226,11 +290,10 @@ def main_app():
     with st.sidebar:
         st.markdown(f"### 👤 {current_firm}")
         
-        # --- SIDEBAR DIAGNOSTIC ---
-        engine = get_db_connection()
-        if not engine and st.session_state.db_error:
-            st.error(f"DB Error: {st.session_state.db_error}")
-        # --------------------------
+        # Sidebar Status
+        eng = get_db_connection()
+        if eng: st.caption("🟢 DB Connected")
+        else: st.caption("🟠 Local Mode")
 
         if st.button("🚪 Αποσύνδεση", use_container_width=True):
             clear_session(current_user)
@@ -253,9 +316,14 @@ def main_app():
                 except: st.error("Error")
 
     try:
+        if "GROQ_API_KEY" not in st.secrets:
+            st.error("Missing GROQ_API_KEY in secrets.")
+            st.stop()
         llm = ChatGroq(temperature=0.3, model_name="llama-3.1-8b-instant", api_key=st.secrets["GROQ_API_KEY"])
         embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2", model_kwargs={'device': 'cpu'})
-    except: st.stop()
+    except Exception as e: 
+        st.error(f"AI Error: {e}")
+        st.stop()
 
     st.title("🗂️ Νομικός Φάκελος")
     
@@ -364,6 +432,11 @@ def main_app():
                     ans = chain.invoke({"context": str(docs), "question": prompt})
                     st.write(ans)
                     st.session_state.messages.append({"role": "assistant", "content": ans})
+                    with st.expander("Πηγές (Verified Sources)"):
+                        if not docs: st.warning("Δεν βρέθηκαν πηγές.")
+                        for i, doc in enumerate(docs):
+                            fname = doc.metadata.get("file_name", "Unknown")
+                            st.caption(f"📄 Πηγή {i+1}: {fname}")
                 except Exception as e: st.error(str(e))
 
     with t5:
@@ -421,12 +494,3 @@ def main_app():
 if "logged_in" not in st.session_state: st.session_state['logged_in'] = False
 if not st.session_state['logged_in']: login_page()
 else: main_app()
-
-
-### Step 2: Check Requirements
-Ensure your GitHub `requirements.txt` includes the database driver. This is the **#1 reason** for connection failure on the Cloud.
-
-1.  Open `requirements.txt`.
-2.  Make sure this line exists at the bottom:
-    ```text
-    psycopg2-binary
