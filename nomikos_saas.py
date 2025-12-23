@@ -421,7 +421,7 @@ def main_app():
 if "logged_in" not in st.session_state: st.session_state['logged_in'] = False
 if not st.session_state['logged_in']: login_page()
 else: main_app()
-```
+
 
 ### Step 2: Check Requirements
 Ensure your GitHub `requirements.txt` includes the database driver. This is the **#1 reason** for connection failure on the Cloud.
