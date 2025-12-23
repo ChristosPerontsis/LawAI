@@ -23,117 +23,37 @@ index_name = "nomikos-index"
 USER_DB_FILE = "user_db.json"
 SESSION_FILE = "active_sessions.json"
 
-# --- 0. MODERN UI ENGINE (CSS + ANIMATIONS) ---
+# --- 0. MODERN UI ENGINE (CSS) ---
 def local_css():
     st.markdown("""
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600&family=Playfair+Display:wght@700&display=swap');
-
-        /* ANIMATIONS */
-        @keyframes fadeIn {
-            0% { opacity: 0; transform: translateY(10px); }
-            100% { opacity: 1; transform: translateY(0); }
-        }
-
-        /* 1. Main Background - Distinct Blue-Grey Gradient */
-        .stApp {
-            background: linear-gradient(135deg, #f0f4f8 0%, #d9e2ec 100%);
-            font-family: 'Inter', sans-serif;
-        }
-        
-        /* 2. Tab Content Animation */
-        .stTabs [data-baseweb="tab-panel"] {
-            animation: fadeIn 0.4s ease-in-out;
-        }
-
-        /* 3. Headers (Legal/Serif Look) */
-        h1, h2, h3 {
-            font-family: 'Playfair Display', serif !important;
-            color: #1e3a8a !important;
-            font-weight: 700;
-            text-shadow: 1px 1px 2px rgba(0,0,0,0.05);
-        }
-        
-        /* 4. Cards (Glass-like effect on containers) */
-        [data-testid="stVerticalBlock"] > [style*="flex-direction: column;"] > [data-testid="stVerticalBlock"] {
-            background-color: #ffffff;
-            padding: 25px;
-            border-radius: 12px;
-            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
-            border: 1px solid #e2e8f0;
-        }
-
-        /* 5. Sidebar Styling - Deep Navy */
-        [data-testid="stSidebar"] {
-            background-color: #0f172a;
-            border-right: 1px solid #334155;
-        }
-        [data-testid="stSidebar"] .stMarkdown h1, [data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3 {
-            color: #f8fafc !important;
-        }
-        [data-testid="stSidebar"] p {
-            color: #94a3b8 !important;
-        }
-
-        /* 6. Buttons (Modern & Rounded with Hover Effect) */
-        div.stButton > button {
-            background: linear-gradient(to bottom, #1e3a8a, #1e40af);
-            color: white !important;
-            border: none;
-            border-radius: 8px;
-            padding: 0.6rem 1.2rem;
-            font-weight: 600;
-            letter-spacing: 0.5px;
-            transition: all 0.2s ease;
-            width: 100%;
-            box-shadow: 0 4px 6px rgba(30, 58, 138, 0.2);
-        }
-        div.stButton > button:hover {
-            background: linear-gradient(to bottom, #1e40af, #1d4ed8);
-            transform: translateY(-2px);
-            box-shadow: 0 6px 8px rgba(30, 58, 138, 0.3);
-        }
-
-        /* 7. Inputs */
-        .stTextInput input, .stDateInput input, .stNumberInput input, .stTextArea textarea {
-            border: 1px solid #cbd5e1;
-            border-radius: 8px;
-            padding: 10px;
-            background-color: #ffffff;
-            transition: border 0.2s;
-        }
-        .stTextInput input:focus {
-            border-color: #1e3a8a;
-            box-shadow: 0 0 0 3px rgba(30, 58, 138, 0.1);
-        }
-
-        /* 8. Tabs Styling */
-        .stTabs [data-baseweb="tab-list"] {
-            gap: 8px;
-            background-color: #ffffff;
-            padding: 10px;
-            border-radius: 10px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-        }
-        .stTabs [data-baseweb="tab"] {
-            height: 40px;
-            white-space: pre-wrap;
-            border-radius: 6px;
-            color: #64748b;
-            font-weight: 600;
-        }
-        .stTabs [aria-selected="true"] {
-            background-color: #eff6ff !important;
-            color: #1e3a8a !important;
-        }
+        .stApp { background: linear-gradient(135deg, #f0f4f8 0%, #d9e2ec 100%); font-family: 'Inter', sans-serif; }
+        h1, h2, h3 { font-family: 'Playfair Display', serif !important; color: #1e3a8a !important; font-weight: 700; }
+        [data-testid="stSidebar"] { background-color: #0f172a; border-right: 1px solid #334155; }
+        [data-testid="stSidebar"] .stMarkdown h1, [data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3 { color: #f8fafc !important; }
+        [data-testid="stSidebar"] p { color: #94a3b8 !important; }
+        div.stButton > button { background: #1e3a8a; color: white !important; border-radius: 8px; border: none; font-weight: 600; }
+        div.stButton > button:hover { background: #172554; }
+        .stTextInput input { border: 1px solid #cbd5e1; border-radius: 6px; }
+        .stTabs [data-baseweb="tab-list"] { gap: 8px; background-color: #ffffff; padding: 10px; border-radius: 10px; }
+        .stTabs [aria-selected="true"] { background-color: #eff6ff !important; color: #1e3a8a !important; }
     </style>
     """, unsafe_allow_html=True)
 
 # --- 1. DATABASE & AUTH FUNCTIONS ---
 def get_db_connection():
     if "DATABASE_URL" in st.secrets:
-        try: return create_engine(st.secrets["DATABASE_URL"])
-        except: return None
+        try:
+            engine = create_engine(st.secrets["DATABASE_URL"])
+            # Test connection
+            with engine.connect() as conn:
+                conn.execute(text("SELECT 1"))
+            return engine
+        except Exception as e:
+            # Silent fail for UI, but allows fallback
+            print(f"DB Connection Failed: {e}")
+            return None
     return None
 
 def hash_password(password):
@@ -228,11 +148,17 @@ def login_page():
     c1, c2, c3 = st.columns([1, 2, 1])
     with c2:
         st.markdown("<br><br>", unsafe_allow_html=True)
-        # Use a container for the card effect
         with st.container():
             st.markdown("<h1 style='text-align: center;'>⚖️ Νομικός Cloud</h1>", unsafe_allow_html=True)
-            st.markdown("<p style='text-align: center; color:#64748b; font-size:1.1rem; margin-bottom: 20px;'>Professional Legal Operation System</p>", unsafe_allow_html=True)
             
+            # --- NEW: DB DIAGNOSTIC ---
+            engine = get_db_connection()
+            if engine:
+                st.success("🟢 Συνδέθηκε με Βάση Δεδομένων (Cloud)")
+            else:
+                st.warning("🟠 Λειτουργία Χωρίς Βάση (Local Mode)")
+            # --------------------------
+
             tab1, tab2 = st.tabs(["Σύνδεση", "Εγγραφή"])
             with tab1:
                 with st.form("login"):
@@ -240,9 +166,8 @@ def login_page():
                     p = st.text_input("Password", type="password", key="login_p")
                     st.markdown("<br>", unsafe_allow_html=True)
                     if st.form_submit_button("ΕΙΣΟΔΟΣ", use_container_width=True):
-                        # UPDATED LOADING TRANSITION (2 SECONDS)
                         with st.spinner("Γίνεται ασφαλής σύνδεση..."):
-                            time.sleep(2) 
+                            time.sleep(1.5) 
                             user_data = load_user_data(u)
                             if user_data and user_data["pass"] == hash_password(p):
                                 new_ts = time.time()
@@ -262,7 +187,7 @@ def login_page():
                     st.markdown("<br>", unsafe_allow_html=True)
                     if st.form_submit_button("ΔΗΜΙΟΥΡΓΙΑ ΛΟΓΑΡΙΑΣΜΟΥ", use_container_width=True):
                         with st.spinner("Δημιουργία λογαριασμού..."):
-                            time.sleep(1.5)
+                            time.sleep(1)
                             if create_user(new_u, new_p, firm):
                                 st.success("Επιτυχής Εγγραφή! Συνδεθείτε.")
                             else:
@@ -274,7 +199,6 @@ def main_app():
     current_firm = st.session_state['firm_id']
     current_user = st.session_state['username']
     
-    # Check Session Logic
     active_sessions = load_sessions()
     my_ts = st.session_state.get('login_ts', 0)
     server_ts = active_sessions.get(current_user, 0)
@@ -290,7 +214,16 @@ def main_app():
     
     with st.sidebar:
         st.markdown(f"### 👤 {current_firm}")
-        if st.button("Αποσύνδεση", use_container_width=True):
+        
+        # --- NEW: DB DIAGNOSTIC ---
+        engine = get_db_connection()
+        if engine:
+            st.caption("🟢 SQL Database: Active")
+        else:
+            st.caption("🟠 JSON Mode (No DB)")
+        # --------------------------
+        
+        if st.button("🚪 Αποσύνδεση", use_container_width=True):
             clear_session(current_user)
             st.session_state['logged_in'] = False
             st.rerun()
@@ -302,20 +235,27 @@ def main_app():
                     pc.Index(index_name).delete(delete_all=True)
                     st.toast("Βάση Καθαρίστηκε")
                 except: st.error("Error")
+        else:
+            if st.button("🗑️ Εκκαθάριση Φακέλου", use_container_width=True):
+                try:
+                    pc = Pinecone(api_key=st.secrets["PINECONE_API_KEY"])
+                    pc.Index(index_name).delete(filter={"firm_id": {"$eq": current_firm}})
+                    st.toast("Deleted Files")
+                except: st.error("Error")
 
     try:
         llm = ChatGroq(temperature=0.3, model_name="llama-3.1-8b-instant", api_key=st.secrets["GROQ_API_KEY"])
         embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2", model_kwargs={'device': 'cpu'})
     except: st.stop()
 
-    st.title("Law AI")
+    st.title("🗂️ Νομικός Φάκελος")
     
     t1, t2, t3, t4, t5, t6 = st.tabs([
         "Αρχειοθέτηση", 
         "Διαχείριση Αρχείων", 
         "Εργαλεία", 
         "Νομικός Βοηθός", 
-        "Αυτόματη Σύνταξη",     
+        "Αυτόματη Σύνταξη", 
         "Διαχείριση Εξώσεων"
     ])
     
@@ -349,7 +289,7 @@ def main_app():
                 st.success("Η διαδικασία ολοκληρώθηκε επιτυχώς.")
 
     with t2:
-        st.subheader("Διαχείριση Εγγράφων")
+        st.header("Διαχείριση Εγγράφων")
         col1, col2 = st.columns([3, 1])
         q = col1.text_input("Αναζήτηση με όνομα αρχείου", key="file_search_input")
         if col2.button("Αναζήτηση", key="btn_file_search"):
@@ -369,7 +309,7 @@ def main_app():
                         st.rerun()
 
     with t3:
-        st.subheader("Νομικά Εργαλεία")
+        st.header("Νομικά Εργαλεία")
         tc = st.radio("Επιλέξτε λειτουργία:", ["Μετάφραση", "Ανωνυμοποίηση (GDPR)"], horizontal=True, key="tool_select")
         if tc == "Μετάφραση":
             txt = st.text_area("Κείμενο προς μετάφραση:", key="trans_input")
@@ -386,7 +326,7 @@ def main_app():
                     st.code(res.content, language="text")
 
     with t4:
-        st.subheader("Νομικός Βοηθός AI")
+        st.header("Νομικός Βοηθός AI")
         active = st.session_state.current_focus_file
         target_id = "Public_Legal_Library" if "ADMIN" in current_firm else current_firm
         
@@ -436,7 +376,6 @@ def main_app():
             mths = m2.text_input("Μήνες", key="mths_val")
             lawyer = st.text_input("Δικηγόρος", key="law_name")
             dets = st.text_area("Στοιχεία Δικηγόρου", key="law_dets")
-            
             if st.form_submit_button("Δημιουργία Εγγράφου"):
                 l_gen = auto_genitive(l_name)
                 t_gen = auto_genitive(t_name)
@@ -455,11 +394,9 @@ def main_app():
                     deadline = sd + datetime.timedelta(days=15)
                     st.session_state.active_evictions.append({"id": len(st.session_state.active_evictions), "name": n, "email": e, "debt": d, "deadline": deadline, "status": "Pending"})
                     st.rerun()
-        
         search_client = st.text_input("Αναζήτηση Οφειλέτη")
         cases = st.session_state.active_evictions
         if search_client: cases = [c for c in cases if search_client.lower() in c['name'].lower()]
-        
         for c in cases:
             if c["status"] == "Pending":
                 with st.container():
