@@ -32,7 +32,7 @@ def local_css():
         h1, h2, h3 { font-family: 'Playfair Display', serif !important; color: #1e3a8a !important; font-weight: 700; }
         [data-testid="stSidebar"] { background-color: #0f172a; border-right: 1px solid #334155; }
         [data-testid="stSidebar"] .stMarkdown h1, [data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3 { color: #f8fafc !important; }
-        [data-testid="stSidebar"] p { color: #94a3b8 !important; }
+        [data-testid="stSidebar"] p, [data-testid="stSidebar"] span { color: #94a3b8 !important; }
         div.stButton > button { background: #1e3a8a; color: white !important; border-radius: 8px; border: none; font-weight: 600; }
         div.stButton > button:hover { background: #172554; }
         .stTextInput input { border: 1px solid #cbd5e1; border-radius: 6px; }
@@ -42,17 +42,22 @@ def local_css():
     """, unsafe_allow_html=True)
 
 # --- 1. DATABASE & AUTH FUNCTIONS ---
+# Global variable to store connection error for display
+if "db_error" not in st.session_state:
+    st.session_state.db_error = None
+
 def get_db_connection():
     if "DATABASE_URL" in st.secrets:
         try:
             engine = create_engine(st.secrets["DATABASE_URL"])
-            # Test connection
+            # Test connection immediately
             with engine.connect() as conn:
                 conn.execute(text("SELECT 1"))
+            st.session_state.db_error = None # Clear error if success
             return engine
         except Exception as e:
-            # Silent fail for UI, but allows fallback
-            print(f"DB Connection Failed: {e}")
+            # Capture error to show in Sidebar
+            st.session_state.db_error = str(e)
             return None
     return None
 
@@ -65,7 +70,8 @@ def load_user_data(username):
         try:
             with engine.connect() as conn:
                 result = conn.execute(text("SELECT * FROM users WHERE username = :u"), {"u": username}).fetchone()
-                if result: return {"pass": result[1], "firm_id": result[2], "role": result[3]}
+                if result:
+                    return {"pass": result[1], "firm_id": result[2], "role": result[3]}
         except: pass
     
     if not os.path.exists(USER_DB_FILE):
@@ -73,7 +79,9 @@ def load_user_data(username):
         with open(USER_DB_FILE, 'w') as f: json.dump(default, f)
         return default.get(username)
     try:
-        with open(USER_DB_FILE, 'r') as f: return json.load(f).get(username)
+        with open(USER_DB_FILE, 'r') as f:
+            users = json.load(f)
+            return users.get(username)
     except: return None
 
 def create_user(username, password, firm_name):
@@ -151,12 +159,15 @@ def login_page():
         with st.container():
             st.markdown("<h1 style='text-align: center;'>⚖️ Νομικός Cloud</h1>", unsafe_allow_html=True)
             
-            # --- NEW: DB DIAGNOSTIC ---
+            # --- UPDATED DIAGNOSTIC ---
             engine = get_db_connection()
             if engine:
                 st.success("🟢 Συνδέθηκε με Βάση Δεδομένων (Cloud)")
             else:
                 st.warning("🟠 Λειτουργία Χωρίς Βάση (Local Mode)")
+                if st.session_state.db_error:
+                    # Show the actual error so we can fix it!
+                    st.error(f"SQL Error: {st.session_state.db_error}")
             # --------------------------
 
             tab1, tab2 = st.tabs(["Σύνδεση", "Εγγραφή"])
@@ -215,14 +226,12 @@ def main_app():
     with st.sidebar:
         st.markdown(f"### 👤 {current_firm}")
         
-        # --- NEW: DB DIAGNOSTIC ---
+        # --- SIDEBAR DIAGNOSTIC ---
         engine = get_db_connection()
-        if engine:
-            st.caption("🟢 SQL Database: Active")
-        else:
-            st.caption("🟠 JSON Mode (No DB)")
+        if not engine and st.session_state.db_error:
+            st.error(f"DB Error: {st.session_state.db_error}")
         # --------------------------
-        
+
         if st.button("🚪 Αποσύνδεση", use_container_width=True):
             clear_session(current_user)
             st.session_state['logged_in'] = False
@@ -412,3 +421,12 @@ def main_app():
 if "logged_in" not in st.session_state: st.session_state['logged_in'] = False
 if not st.session_state['logged_in']: login_page()
 else: main_app()
+```
+
+### Step 2: Check Requirements
+Ensure your GitHub `requirements.txt` includes the database driver. This is the **#1 reason** for connection failure on the Cloud.
+
+1.  Open `requirements.txt`.
+2.  Make sure this line exists at the bottom:
+    ```text
+    psycopg2-binary
