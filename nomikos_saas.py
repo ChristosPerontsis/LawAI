@@ -394,9 +394,3 @@ if "logged_in" not in st.session_state: st.session_state['logged_in'] = False
 if not st.session_state['logged_in']: login_page()
 else: main_app()
 
-
-### Action for CP:
-1.  Save the file locally.
-2.  **Push to GitHub.**
-3.  Refresh your live website.
-4.  You will see a clean, professional login screen (no orange lights, no emojis).
