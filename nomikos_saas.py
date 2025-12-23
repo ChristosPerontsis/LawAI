@@ -67,7 +67,9 @@ def load_user_data(username):
         with open(USER_DB_FILE, 'w') as f: json.dump(default, f)
         return default.get(username)
     try:
-        with open(USER_DB_FILE, 'r') as f: return json.load(f).get(username)
+        with open(USER_DB_FILE, 'r') as f:
+            users = json.load(f)
+            return users.get(username)
     except: return None
 
 def create_user(username, password, firm_name):
@@ -89,6 +91,7 @@ def create_user(username, password, firm_name):
     if os.path.exists(USER_DB_FILE):
         with open(USER_DB_FILE, 'r') as f: users = json.load(f)
     else: users = {}
+    
     if username in users: return False
     users[username] = {"pass": hashed_pw, "firm_id": firm_name, "role": "user"}
     with open(USER_DB_FILE, 'w') as f: json.dump(users, f)
@@ -144,7 +147,6 @@ def login_page():
         st.markdown("<br><br>", unsafe_allow_html=True)
         with st.container():
             st.markdown("<h1 style='text-align: center;'>⚖️ Νομικός Cloud</h1>", unsafe_allow_html=True)
-            # REMOVED DEBUG INDICATORS HERE
             
             tab1, tab2 = st.tabs(["Σύνδεση", "Εγγραφή"])
             with tab1:
@@ -200,16 +202,11 @@ def main_app():
     if "current_focus_file" not in st.session_state: st.session_state.current_focus_file = None
     
     with st.sidebar:
-        st.markdown(f"### 👤 {current_firm}")
-        
-        # REMOVED SIDEBAR DIAGNOSTIC
-        # REMOVED CLEAR FOLDER BUTTON
-
+        st.markdown(f"### {current_firm}")
         if st.button("🚪 Αποσύνδεση", use_container_width=True):
             clear_session(current_user)
             st.session_state['logged_in'] = False
             st.rerun()
-        
         st.divider()
         if "ADMIN" in current_firm:
             if st.button("Διαγραφή ΟΛΩΝ (Admin)", type="primary", use_container_width=True):
@@ -331,11 +328,25 @@ def main_app():
                     ans = chain.invoke({"context": str(docs), "question": prompt})
                     st.write(ans)
                     st.session_state.messages.append({"role": "assistant", "content": ans})
+                    
+                    # --- FIXED SOURCE DISPLAY ---
                     with st.expander("Πηγές (Verified Sources)"):
                         if not docs: st.warning("Δεν βρέθηκαν πηγές.")
                         for i, doc in enumerate(docs):
-                            fname = doc.metadata.get("file_name", "Unknown")
-                            st.caption(f"📄 Πηγή {i+1}: {fname}")
+                            # Priority 1: Filename (for Private Files)
+                            fname = doc.metadata.get("file_name")
+                            # Priority 2: Article ID (for Public Laws)
+                            art_id = doc.metadata.get("article_id")
+                            
+                            if fname:
+                                display_name = f"📄 Αρχείο: {fname}"
+                            elif art_id:
+                                display_name = f"⚖️ Νόμος: Άρθρο {art_id}"
+                            else:
+                                display_name = "Άγνωστη Πηγή"
+                                
+                            st.caption(f"Πηγή {i+1}: {display_name}")
+                            
                 except Exception as e: st.error(str(e))
 
     with t5:
@@ -393,4 +404,3 @@ def main_app():
 if "logged_in" not in st.session_state: st.session_state['logged_in'] = False
 if not st.session_state['logged_in']: login_page()
 else: main_app()
-
