@@ -7,8 +7,9 @@ import json
 import time
 import hashlib
 import pandas as pd
+# --- SWAPPED IMPORTS: REMOVED GROQ, ADDED GOOGLE ---
 from langchain_community.document_loaders import PyPDFLoader
-from langchain_groq import ChatGroq
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_pinecone import PineconeVectorStore
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_core.prompts import ChatPromptTemplate
@@ -216,10 +217,18 @@ def main_app():
                     st.toast("Βάση Καθαρίστηκε")
                 except: st.error("Error")
 
+    # --- SWAPPED LLM: USING GEMINI NOW ---
     try:
-        llm = ChatGroq(temperature=0.3, model_name="llama-3.1-8b-instant", api_key=st.secrets["GROQ_API_KEY"])
+        # We use Gemini 1.5 Pro because it is smarter and has a huge context window
+        llm = ChatGoogleGenerativeAI(
+            model="gemini-1.5-pro", 
+            temperature=0.3, 
+            google_api_key=st.secrets["GOOGLE_API_KEY"]
+        )
         embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2", model_kwargs={'device': 'cpu'})
-    except: st.stop()
+    except Exception as e: 
+        st.error(f"Error initializing AI: {e}")
+        st.stop()
 
     st.title("🗂️ Νομικός Φάκελος")
     
@@ -299,8 +308,8 @@ def main_app():
                     st.code(res.content, language="text")
 
     with t4:
-        st.header("Νομικός Βοηθός AI")
-        st.caption("Ρωτήστε για τη Βάση Δεδομένων σας ή ανεβάστε ένα προσωρινό έγγραφο για ανάλυση.")
+        st.header("Νομικός Βοηθός AI (Gemini Pro)")
+        st.caption("Υποστηρίζεται από το Google Gemini 1.5 Pro για μέγιστη νομική ακρίβεια.")
         
         main_chat, side_context = st.columns([3, 1])
         
@@ -352,17 +361,17 @@ def main_app():
                         # 3. Combine
                         final_context = f"DATABASE RESULTS:\n{db_context}\n\nUPLOADED DOCUMENT:\n{pdf_context}"
                         
-                        # 4. SAFETY PROMPT WITH SOURCE ATTRIBUTION
-                        system_prompt = """Είσαι ένας έμπειρος Νομικός Σύμβουλος (Llama-3). 
+                        # 4. SAFETY PROMPT FOR GEMINI
+                        system_prompt = """Είσαι ένας έμπειρος Νομικός Σύμβουλος (Google Gemini 1.5 Pro). 
                         
-                        ΚΑΝΟΝΑΣ ΑΣΦΑΛΕΙΑΣ:
-                        Για κάθε πληροφορία που δίνεις, ΠΡΕΠΕΙ να αναφέρεις την πηγή της στο τέλος της πρότασης, χρησιμοποιώντας μία από τις εξής ετικέτες:
+                        ΟΔΗΓΙΕΣ ΑΠΑΝΤΗΣΗΣ (ΑΚΟΛΟΥΘΗΣΕ ΑΥΣΤΗΡΑ):
+                        1. ΕΛΕΓΧΟΣ: Διάβασε τα 'DATABASE RESULTS'. Είναι ΣΧΕΤΙΚΑ με την ερώτηση; (π.χ. αν ρωτάει για 'Υπομίσθωση' και τα αποτελέσματα είναι για 'Διανομή', ΤΟΤΕ ΕΙΝΑΙ ΑΣΧΕΤΑ).
                         
-                        1. [ΠΗΓΗ: ΕΓΓΡΑΦΟ] -> Αν η πληροφορία προέρχεται από το 'UPLOADED DOCUMENT'.
-                        2. [ΠΗΓΗ: ΒΑΣΗ ΔΕΔΟΜΕΝΩΝ] -> Αν η πληροφορία προέρχεται από τα 'DATABASE RESULTS'.
-                        3. [ΠΗΓΗ: ΝΟΜΙΚΗ ΓΝΩΣΗ AI] -> Αν χρησιμοποιείς τις γενικές νομικές σου γνώσεις (π.χ. για νόμους που δεν υπάρχουν στο κείμενο).
-
-                        Αν δεν είσαι σίγουρος, πες το ξεκάθαρα.
+                        2. ΑΠΟΦΑΣΗ:
+                           - ΑΝ ΒΡΗΚΕΣ ΤΗΝ ΑΠΑΝΤΗΣΗ ΣΤΑ ΚΕΙΜΕΝΑ: Χρησιμοποίησέ τα και βάλε [ΠΗΓΗ: ΒΑΣΗ ΔΕΔΟΜΕΝΩΝ] ή [ΠΗΓΗ: ΕΓΓΡΑΦΟ].
+                           - ΑΝ ΤΑ ΚΕΙΜΕΝΑ ΕΙΝΑΙ ΑΣΧΕΤΑ Ή ΕΛΛΙΠΗ: ΑΓΝΟΗΣΕ ΤΑ ΤΕΛΕΙΩΣ. Απάντησε απευθείας από την ευρεία Νομική σου Γνώση (Γενικό Αστικό Δίκαιο/ΚΠολΔ) και βάλε [ΠΗΓΗ: ΝΟΜΙΚΗ ΓΝΩΣΗ AI].
+                        
+                        3. Μην πεις ποτέ 'δεν έχω πληροφορίες' για θέματα γενικού δικαίου. Ξέρεις την απάντηση. Δώσε την.
 
                         CONTEXT:
                         {context}
