@@ -217,17 +217,35 @@ def main_app():
                     st.toast("Βάση Καθαρίστηκε")
                 except: st.error("Error")
 
-    # --- SWAPPED LLM: USING GEMINI NOW ---
+    # --- UPDATED LLM INIT: Automatic Fallback ---
+    # Attempts 1.5-flash-001 (specific version) -> falls back to gemini-pro (stable)
     try:
-        # We use Gemini 1.5 Flash (latest) to ensure compatibility
-        llm = ChatGoogleGenerativeAI(
-            model="gemini-1.5-flash", 
-            temperature=0.3, 
-            google_api_key=st.secrets["GOOGLE_API_KEY"]
-        )
+        if "llm_model" not in st.session_state:
+            try:
+                # Primary Attempt: Gemini 1.5 Flash (Specific Version)
+                llm = ChatGoogleGenerativeAI(
+                    model="gemini-1.5-flash-001", 
+                    temperature=0.3, 
+                    google_api_key=st.secrets["GOOGLE_API_KEY"]
+                )
+                # Test the connection with a dummy prompt
+                llm.invoke("test") 
+                st.session_state.llm_model = llm
+                # st.toast("Connected to Gemini 1.5 Flash") # Optional debug toast
+            except Exception:
+                # Fallback Attempt: Gemini Pro (1.0 - Very Stable)
+                st.toast("⚠️ Switching to Gemini Pro (Stable Mode)")
+                llm = ChatGoogleGenerativeAI(
+                    model="gemini-pro", 
+                    temperature=0.3, 
+                    google_api_key=st.secrets["GOOGLE_API_KEY"]
+                )
+                st.session_state.llm_model = llm
+        
+        llm = st.session_state.llm_model
         embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2", model_kwargs={'device': 'cpu'})
     except Exception as e: 
-        st.error(f"Error initializing AI: {e}")
+        st.error(f"Critical Error initializing AI: {e}")
         st.stop()
 
     st.title("🗂️ Νομικός Φάκελος")
@@ -308,8 +326,8 @@ def main_app():
                     st.code(res.content, language="text")
 
     with t4:
-        st.header("Νομικός Βοηθός AI (Gemini Flash)")
-        st.caption("Υποστηρίζεται από το Google Gemini 1.5 Flash για μέγιστη νομική ακρίβεια.")
+        st.header("Νομικός Βοηθός AI (Gemini)")
+        st.caption("Υποστηρίζεται από το Google Gemini για μέγιστη νομική ακρίβεια.")
         
         main_chat, side_context = st.columns([3, 1])
         
@@ -362,7 +380,7 @@ def main_app():
                         final_context = f"DATABASE RESULTS:\n{db_context}\n\nUPLOADED DOCUMENT:\n{pdf_context}"
                         
                         # 4. SAFETY PROMPT FOR GEMINI
-                        system_prompt = """Είσαι ένας έμπειρος Νομικός Σύμβουλος (Google Gemini 1.5 Flash). 
+                        system_prompt = """Είσαι ένας έμπειρος Νομικός Σύμβουλος (Google Gemini). 
                         
                         ΟΔΗΓΙΕΣ ΑΠΑΝΤΗΣΗΣ (ΑΚΟΛΟΥΘΗΣΕ ΑΥΣΤΗΡΑ):
                         1. ΕΛΕΓΧΟΣ: Διάβασε τα 'DATABASE RESULTS'. Είναι ΣΧΕΤΙΚΑ με την ερώτηση; (π.χ. αν ρωτάει για 'Υπομίσθωση' και τα αποτελέσματα είναι για 'Διανομή', ΤΟΤΕ ΕΙΝΑΙ ΑΣΧΕΤΑ).
