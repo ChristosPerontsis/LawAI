@@ -17,6 +17,7 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from pinecone import Pinecone
 from sqlalchemy import create_engine, text
+import google.generativeai as genai # Added for model discovery
 
 # --- CONFIGURATION ---
 st.set_page_config(page_title="Νομικός Σύμβουλος", layout="wide", page_icon="⚖️")
@@ -217,46 +218,60 @@ def main_app():
                     st.toast("Βάση Καθαρίστηκε")
                 except: st.error("Error")
 
-    # --- UPDATED LLM INIT: Automatic Fallback ---
-    # Attempts iterating through known working model names until one connects
-    if "llm_model" not in st.session_state:
-        # List of potential model names to try in order of preference
-        model_candidates = [
-            "gemini-1.5-flash",
-            "gemini-1.5-flash-001",
-            "gemini-1.5-pro",
-            "gemini-1.5-pro-001",
-            "gemini-pro"
-        ]
-        
-        connected_model = None
-        last_error = None
-
-        with st.spinner("Connecting to AI Brain..."):
-            for model_name in model_candidates:
-                try:
-                    # Attempt connection
-                    test_llm = ChatGoogleGenerativeAI(
-                        model=model_name, 
+    # --- UPDATED LLM INIT: Automatic Model Discovery ---
+    # This queries Google's servers to find out which models you can actually use.
+    if "nomikos_llm" not in st.session_state:
+        try:
+            with st.spinner("Finding available AI models..."):
+                genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
+                
+                # Ask Google: "What models are available to this API key?"
+                all_models = list(genai.list_models())
+                available_model_names = [
+                    m.name.replace("models/", "") 
+                    for m in all_models 
+                    if 'generateContent' in m.supported_generation_methods
+                ]
+                
+                # Logic: Pick the best available one
+                selected_model = None
+                
+                # Priority 1: Gemini 1.5 Flash (Any version)
+                for m in available_model_names:
+                    if "gemini-1.5-flash" in m:
+                        selected_model = m
+                        break
+                
+                # Priority 2: Gemini 1.5 Pro (Any version)
+                if not selected_model:
+                    for m in available_model_names:
+                        if "gemini-1.5-pro" in m:
+                            selected_model = m
+                            break
+                
+                # Fallback to legacy or other
+                if not selected_model:
+                    if "gemini-pro" in available_model_names:
+                        selected_model = "gemini-pro"
+                    elif available_model_names:
+                        selected_model = available_model_names[0] # Fallback to whatever exists
+                
+                if selected_model:
+                    # st.toast(f"Connected to: {selected_model}") # Optional: Show user the model
+                    st.session_state.nomikos_llm = ChatGoogleGenerativeAI(
+                        model=selected_model, 
                         temperature=0.3, 
                         google_api_key=st.secrets["GOOGLE_API_KEY"]
                     )
-                    # Simple test invocation to verify connection
-                    test_llm.invoke("Hi")
-                    connected_model = test_llm
-                    # st.toast(f"Connected to {model_name}") # Uncomment for debugging
-                    break
-                except Exception as e:
-                    last_error = e
-                    continue
-        
-        if connected_model:
-            st.session_state.llm_model = connected_model
-        else:
-            st.error(f"Could not connect to Google AI. Please check your API Key. Last Error: {last_error}")
+                else:
+                    st.error("No compatible Gemini models found for this API Key. Please check permissions.")
+                    st.stop()
+                    
+        except Exception as e:
+            st.error(f"Failed to connect to Google AI. Please verify API Key. Error: {e}")
             st.stop()
 
-    llm = st.session_state.llm_model
+    llm = st.session_state.nomikos_llm
     
     try:
         embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2", model_kwargs={'device': 'cpu'})
