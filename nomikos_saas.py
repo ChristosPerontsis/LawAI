@@ -299,7 +299,7 @@ def main_app():
                     st.code(res.content, language="text")
 
     with t4:
-        st.header("Νομικός Βοηθός AI (Unified Mode)")
+        st.header("Νομικός Βοηθός AI")
         st.caption("Ρωτήστε για τη Βάση Δεδομένων σας ή ανεβάστε ένα προσωρινό έγγραφο για ανάλυση.")
         
         main_chat, side_context = st.columns([3, 1])
