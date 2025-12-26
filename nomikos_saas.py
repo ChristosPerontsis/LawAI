@@ -219,9 +219,9 @@ def main_app():
 
     # --- SWAPPED LLM: USING GEMINI NOW ---
     try:
-        # We use Gemini 1.5 Pro because it is smarter and has a huge context window
+        # We use Gemini 1.5 Flash (latest) to ensure compatibility
         llm = ChatGoogleGenerativeAI(
-            model="gemini-1.5-flash", 
+            model="gemini-1.5-flash-latest", 
             temperature=0.3, 
             google_api_key=st.secrets["GOOGLE_API_KEY"]
         )
@@ -308,8 +308,8 @@ def main_app():
                     st.code(res.content, language="text")
 
     with t4:
-        st.header("Νομικός Βοηθός AI (Gemini Pro)")
-        st.caption("Υποστηρίζεται από το Google Gemini 1.5 Pro για μέγιστη νομική ακρίβεια.")
+        st.header("Νομικός Βοηθός AI (Gemini Flash)")
+        st.caption("Υποστηρίζεται από το Google Gemini 1.5 Flash για μέγιστη νομική ακρίβεια.")
         
         main_chat, side_context = st.columns([3, 1])
         
@@ -362,7 +362,7 @@ def main_app():
                         final_context = f"DATABASE RESULTS:\n{db_context}\n\nUPLOADED DOCUMENT:\n{pdf_context}"
                         
                         # 4. SAFETY PROMPT FOR GEMINI
-                        system_prompt = """Είσαι ένας έμπειρος Νομικός Σύμβουλος (Google Gemini 1.5 Pro). 
+                        system_prompt = """Είσαι ένας έμπειρος Νομικός Σύμβουλος (Google Gemini 1.5 Flash). 
                         
                         ΟΔΗΓΙΕΣ ΑΠΑΝΤΗΣΗΣ (ΑΚΟΛΟΥΘΗΣΕ ΑΥΣΤΗΡΑ):
                         1. ΕΛΕΓΧΟΣ: Διάβασε τα 'DATABASE RESULTS'. Είναι ΣΧΕΤΙΚΑ με την ερώτηση; (π.χ. αν ρωτάει για 'Υπομίσθωση' και τα αποτελέσματα είναι για 'Διανομή', ΤΟΤΕ ΕΙΝΑΙ ΑΣΧΕΤΑ).
