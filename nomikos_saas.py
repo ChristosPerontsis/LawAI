@@ -199,7 +199,7 @@ def main_app():
 
     if "active_evictions" not in st.session_state: st.session_state.active_evictions = []
     if "messages" not in st.session_state: st.session_state.messages = []
-    if "current_focus_file" not in st.session_state: st.session_state.current_focus_file = None
+    if "analysis_text" not in st.session_state: st.session_state.analysis_text = ""
     
     with st.sidebar:
         st.markdown(f"### {current_firm}")
@@ -299,119 +299,92 @@ def main_app():
                     st.code(res.content, language="text")
 
     with t4:
-        st.header("Νομικός Βοηθός AI")
+        st.header("Νομικός Βοηθός AI (Unified Mode)")
+        st.caption("Ρωτήστε για τη Βάση Δεδομένων σας ή ανεβάστε ένα προσωρινό έγγραφο για ανάλυση.")
         
-        # --- NEW: MODE SELECTION (Database vs Single File) ---
-        mode = st.radio("Λειτουργία:", ["🗄️ Συνομιλία με Βάση Δεδομένων", "📄 Ανάλυση Μεμονωμένου Εγγράφου"], horizontal=True, label_visibility="collapsed")
-
-        if mode == "🗄️ Συνομιλία με Βάση Δεδομένων":
-            active = st.session_state.current_focus_file
-            target_id = "Public_Legal_Library" if "ADMIN" in current_firm else current_firm
+        main_chat, side_context = st.columns([3, 1])
+        
+        with side_context:
+            st.info("📂 **Ενεργό Έγγραφο**")
+            uploaded_file = st.file_uploader("Προσθήκη Εγγράφου στη Συζήτηση", type="pdf", key="unified_pdf_uploader")
             
-            if active:
-                st.info(f"📂 Εστίαση: **{active}**")
-                if st.button("Καθαρισμός Εστίασης", key="cls_focus"):
-                    st.session_state.current_focus_file = None
-                    st.rerun()
-                search_filter = {"$or": [{"file_name": {"$eq": active}}, {"firm_id": {"$eq": "Public_Legal_Library"}}]}
+            if uploaded_file:
+                file_id = f"{uploaded_file.name}_{uploaded_file.size}"
+                if "current_pdf_id" not in st.session_state or st.session_state.current_pdf_id != file_id:
+                    with st.spinner("Ανάγνωση..."):
+                        try:
+                            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+                                tmp.write(uploaded_file.getvalue())
+                                tmp_path = tmp.name
+                            loader = PyPDFLoader(tmp_path)
+                            docs = loader.load()
+                            full_text = "\n".join([d.page_content for d in docs])
+                            st.session_state.analysis_text = full_text
+                            st.session_state.current_pdf_id = file_id
+                            os.unlink(tmp_path)
+                        except: pass
+                st.success(f"✅ {uploaded_file.name} (Ενεργό)")
             else:
-                st.caption("🔍 Αναζήτηση σε όλη τη βάση δεδομένων.")
-                search_filter = {"firm_id": {"$in": [target_id, "Public_Legal_Library"]}}
-                
+                st.session_state.analysis_text = ""
+                st.markdown("*Κανένα ενεργό έγγραφο.*")
+
+        with main_chat:
             for m in st.session_state.messages: st.chat_message(m["role"]).write(m["content"])
             
-            if prompt := st.chat_input("Πληκτρολογήστε την ερώτησή σας...", key="chat_input_db"):
+            if prompt := st.chat_input("Πληκτρολογήστε την ερώτησή σας...", key="unified_chat"):
                 st.session_state.messages.append({"role": "user", "content": prompt})
                 st.chat_message("user").write(prompt)
                 
                 with st.chat_message("assistant"):
                     try:
+                        # 1. Search Database
                         vs = PineconeVectorStore(index_name=index_name, embedding=embeddings)
-                        retriever = vs.as_retriever(search_kwargs={'filter': search_filter, 'k': 10})
-                        chain = ChatPromptTemplate.from_template("Είσαι Νομικός Βοηθός. Απάντησε ΜΟΝΟ βάσει του κειμένου. Αν ζητηθεί Σύνοψη, δώσε: Ιστορικό | Ετυμηγορία | Σκεπτικό | Νόμοι.\nContext: {context}\nQ: {question}") | llm | StrOutputParser()
-                        docs = retriever.invoke(prompt)
-                        ans = chain.invoke({"context": str(docs), "question": prompt})
+                        target_id = "Public_Legal_Library" if "ADMIN" in current_firm else current_firm
+                        search_filter = {"firm_id": {"$in": [target_id, "Public_Legal_Library"]}}
+                        
+                        retriever = vs.as_retriever(search_kwargs={'filter': search_filter, 'k': 5})
+                        db_docs = retriever.invoke(prompt)
+                        db_context = str(db_docs)
+                        
+                        # 2. Get PDF Context
+                        pdf_context = st.session_state.analysis_text[:20000] if st.session_state.analysis_text else ""
+                        
+                        # 3. Combine
+                        final_context = f"DATABASE RESULTS:\n{db_context}\n\nUPLOADED DOCUMENT:\n{pdf_context}"
+                        
+                        # 4. SAFETY PROMPT WITH SOURCE ATTRIBUTION
+                        system_prompt = """Είσαι ένας έμπειρος Νομικός Σύμβουλος (Llama-3). 
+                        
+                        ΚΑΝΟΝΑΣ ΑΣΦΑΛΕΙΑΣ:
+                        Για κάθε πληροφορία που δίνεις, ΠΡΕΠΕΙ να αναφέρεις την πηγή της στο τέλος της πρότασης, χρησιμοποιώντας μία από τις εξής ετικέτες:
+                        
+                        1. [ΠΗΓΗ: ΕΓΓΡΑΦΟ] -> Αν η πληροφορία προέρχεται από το 'UPLOADED DOCUMENT'.
+                        2. [ΠΗΓΗ: ΒΑΣΗ ΔΕΔΟΜΕΝΩΝ] -> Αν η πληροφορία προέρχεται από τα 'DATABASE RESULTS'.
+                        3. [ΠΗΓΗ: ΝΟΜΙΚΗ ΓΝΩΣΗ AI] -> Αν χρησιμοποιείς τις γενικές νομικές σου γνώσεις (π.χ. για νόμους που δεν υπάρχουν στο κείμενο).
+
+                        Αν δεν είσαι σίγουρος, πες το ξεκάθαρα.
+
+                        CONTEXT:
+                        {context}
+                        
+                        QUESTION:
+                        {question}"""
+                        
+                        chain = ChatPromptTemplate.from_template(system_prompt) | llm | StrOutputParser()
+                        ans = chain.invoke({"context": final_context, "question": prompt})
+                        
                         st.write(ans)
                         st.session_state.messages.append({"role": "assistant", "content": ans})
                         
-                        # --- FIXED SOURCE DISPLAY ---
-                        with st.expander("Πηγές (Verified Sources)"):
-                            if not docs: st.warning("Δεν βρέθηκαν πηγές.")
-                            for i, doc in enumerate(docs):
-                                fname = doc.metadata.get("file_name")
-                                art_id = doc.metadata.get("article_id")
-                                if fname: display_name = f"📄 Αρχείο: {fname}"
-                                elif art_id: display_name = f"⚖️ Νόμος: Άρθρο {art_id}"
-                                else: display_name = "Άγνωστη Πηγή"
-                                st.caption(f"Πηγή {i+1}: {display_name}")
-                    except Exception as e: st.error(str(e))
-
-        else: # --- NEW FEATURE: SINGLE DOCUMENT ANALYSIS ---
-            st.subheader("Ανάλυση Εγγράφου (PDF)")
-            st.caption("Ανεβάστε ένα αρχείο για άμεση ανάλυση χωρίς να το αποθηκεύσετε στη μόνιμη βάση δεδομένων.")
-            
-            if "analysis_messages" not in st.session_state: st.session_state.analysis_messages = []
-            if "analysis_text" not in st.session_state: st.session_state.analysis_text = ""
-            
-            uploaded_file = st.file_uploader("Ανεβάστε PDF για ανάλυση", type="pdf", key="pdf_analyser")
-            
-            # Logic to process the file
-            if uploaded_file:
-                # Create a unique ID for this upload to avoid re-processing on every click
-                file_id = f"{uploaded_file.name}_{uploaded_file.size}"
-                
-                # Check if it's a new file
-                if "current_pdf_id" not in st.session_state or st.session_state.current_pdf_id != file_id:
-                    with st.spinner("Ανάγνωση αρχείου..."):
-                        try:
-                            # Save temp file because PyPDFLoader needs a path
-                            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-                                tmp.write(uploaded_file.getvalue())
-                                tmp_path = tmp.name
-                            
-                            loader = PyPDFLoader(tmp_path)
-                            docs = loader.load()
-                            full_text = "\n".join([d.page_content for d in docs])
-                            
-                            st.session_state.analysis_text = full_text
-                            st.session_state.current_pdf_id = file_id
-                            st.session_state.analysis_messages = [] # Reset chat for new file
-                            
-                            os.unlink(tmp_path)
-                            st.success(f"✅ Το αρχείο αναγνώστηκε ({len(full_text)} χαρακτήρες).")
-                        except Exception as e:
-                            st.error(f"Σφάλμα ανάγνωσης: {e}")
-            
-            # Show Chat History
-            if st.session_state.analysis_text:
-                for m in st.session_state.analysis_messages: st.chat_message(m["role"]).write(m["content"])
-                
-                # Input for analysis
-                if prompt := st.chat_input("Ρωτήστε κάτι για το έγγραφο...", key="chat_input_pdf"):
-                    st.session_state.analysis_messages.append({"role": "user", "content": prompt})
-                    st.chat_message("user").write(prompt)
-                    
-                    with st.chat_message("assistant"):
-                        with st.spinner("Σκέφτεται..."):
-                            try:
-                                # Use text as context
-                                context = st.session_state.analysis_text[:30000] # Limit to avoid context window errors
-                                sys_prompt = f"""Είσαι Νομικός Βοηθός. Ο χρήστης ανέβασε ένα έγγραφο. 
-                                Απάντησε στην ερώτηση χρησιμοποιώντας ΜΟΝΟ το παρακάτω κείμενο.
-                                Αν η απάντηση δεν υπάρχει στο κείμενο, πες το.
-                                
-                                ΚΕΙΜΕΝΟ ΕΓΓΡΑΦΟΥ:
-                                {context}
-                                
-                                ΕΡΩΤΗΣΗ: {prompt}"""
-                                
-                                res = llm.invoke(sys_prompt)
-                                st.write(res.content)
-                                st.session_state.analysis_messages.append({"role": "assistant", "content": res.content})
-                            except Exception as e:
-                                st.error(f"Error: {e}")
-            elif not uploaded_file:
-                 st.info("Ανεβάστε ένα αρχείο PDF για να ξεκινήσετε τη συνομιλία.")
+                        with st.expander("Πηγές & Δεδομένα"):
+                            if pdf_context: st.markdown(f"📄 **Ενεργό Έγγραφο:** {uploaded_file.name}")
+                            if db_docs:
+                                st.markdown("**Βάση Δεδομένων:**")
+                                for i, doc in enumerate(db_docs):
+                                    fname = doc.metadata.get("file_name", "Άγνωστο")
+                                    st.caption(f"{i+1}. {fname}")
+                                    
+                    except Exception as e: st.error(f"Error: {e}")
 
     with t5:
         st.subheader("Αυτόματη Σύνταξη Εξωδίκου")
