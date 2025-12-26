@@ -221,7 +221,7 @@ def main_app():
     try:
         # We use Gemini 1.5 Flash (latest) to ensure compatibility
         llm = ChatGoogleGenerativeAI(
-            model="gemini-1.5-flash-latest", 
+            model="gemini-1.5-flash", 
             temperature=0.3, 
             google_api_key=st.secrets["GOOGLE_API_KEY"]
         )
