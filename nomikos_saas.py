@@ -218,34 +218,50 @@ def main_app():
                 except: st.error("Error")
 
     # --- UPDATED LLM INIT: Automatic Fallback ---
-    # Attempts 1.5-flash-001 (specific version) -> falls back to gemini-pro (stable)
-    try:
-        if "llm_model" not in st.session_state:
-            try:
-                # Primary Attempt: Gemini 1.5 Flash (Specific Version)
-                llm = ChatGoogleGenerativeAI(
-                    model="gemini-1.5-flash-001", 
-                    temperature=0.3, 
-                    google_api_key=st.secrets["GOOGLE_API_KEY"]
-                )
-                # Test the connection with a dummy prompt
-                llm.invoke("test") 
-                st.session_state.llm_model = llm
-                # st.toast("Connected to Gemini 1.5 Flash") # Optional debug toast
-            except Exception:
-                # Fallback Attempt: Gemini Pro (1.0 - Very Stable)
-                st.toast("⚠️ Switching to Gemini Pro (Stable Mode)")
-                llm = ChatGoogleGenerativeAI(
-                    model="gemini-pro", 
-                    temperature=0.3, 
-                    google_api_key=st.secrets["GOOGLE_API_KEY"]
-                )
-                st.session_state.llm_model = llm
+    # Attempts iterating through known working model names until one connects
+    if "llm_model" not in st.session_state:
+        # List of potential model names to try in order of preference
+        model_candidates = [
+            "gemini-1.5-flash",
+            "gemini-1.5-flash-001",
+            "gemini-1.5-pro",
+            "gemini-1.5-pro-001",
+            "gemini-pro"
+        ]
         
-        llm = st.session_state.llm_model
+        connected_model = None
+        last_error = None
+
+        with st.spinner("Connecting to AI Brain..."):
+            for model_name in model_candidates:
+                try:
+                    # Attempt connection
+                    test_llm = ChatGoogleGenerativeAI(
+                        model=model_name, 
+                        temperature=0.3, 
+                        google_api_key=st.secrets["GOOGLE_API_KEY"]
+                    )
+                    # Simple test invocation to verify connection
+                    test_llm.invoke("Hi")
+                    connected_model = test_llm
+                    # st.toast(f"Connected to {model_name}") # Uncomment for debugging
+                    break
+                except Exception as e:
+                    last_error = e
+                    continue
+        
+        if connected_model:
+            st.session_state.llm_model = connected_model
+        else:
+            st.error(f"Could not connect to Google AI. Please check your API Key. Last Error: {last_error}")
+            st.stop()
+
+    llm = st.session_state.llm_model
+    
+    try:
         embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2", model_kwargs={'device': 'cpu'})
     except Exception as e: 
-        st.error(f"Critical Error initializing AI: {e}")
+        st.error(f"Error initializing Embeddings: {e}")
         st.stop()
 
     st.title("🗂️ Νομικός Φάκελος")
