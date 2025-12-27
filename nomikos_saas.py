@@ -7,7 +7,7 @@ import json
 import time
 import hashlib
 import pandas as pd
-# --- SWAPPED IMPORTS: REMOVED GROQ, ADDED GOOGLE ---
+# --- IMPORTS ---
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_pinecone import PineconeVectorStore
@@ -277,19 +277,19 @@ def main_app():
                             docs = loader.load()
                             clean_name = f.name
                             
-                            # --- FIXED SURGEON SPLITTER LOGIC ---
+                            # --- IMPROVED SURGEON SPLITTER ---
                             if splitter_type == "Κώδικας/Νόμοι (Smart Article Splitter)":
-                                # Updated separators to handle "Άρθρο : 126" and "Άρθρο 126"
+                                # Includes spaces, newlines, and colons to catch "Άρθρο : 126" and "Άρθρο 126"
                                 splitter = RecursiveCharacterTextSplitter(
                                     separators=[
-                                        "\nΆρθρο :", "\nΑΡΘΡΟ :", "\nΆρθρο:", "\nΑΡΘΡΟ:", # With Colon
-                                        "\nΆρθρο ", "\nΑΡΘΡΟ ", # Without Colon
+                                        "\nΆρθρο :", "\nΑΡΘΡΟ :", "\nΆρθρο:", "\nΑΡΘΡΟ:", 
+                                        "\nΆρθρο", "\nΑΡΘΡΟ", 
                                         "Άρθρο :", "ΑΡΘΡΟ :", 
                                         "Άρθρο ", "ΑΡΘΡΟ ",
                                         "\n\n", "\n"
                                     ],
-                                    chunk_size=2000, 
-                                    chunk_overlap=50,
+                                    chunk_size=2500, # Increased chunk size to keep full articles together
+                                    chunk_overlap=100,
                                     keep_separator=True
                                 )
                             else:
@@ -306,8 +306,8 @@ def main_app():
                                 d.metadata["source_type"] = upload_type
                                 d.metadata["file_name"] = clean_name
                                 
-                                # FIXED REGEX to capture Article ID with optional colon
-                                # Matches: "Άρθρο 126" OR "Άρθρο : 126" OR "Άρθρο:126"
+                                # IMPROVED REGEX for Metadata
+                                # Captures "Άρθρο : 126" or "Άρθρο 126"
                                 match = re.search(r'(Άρθρο|ΑΡΘΡΟ)\s*:?\s*(\d+)', d.page_content)
                                 if match:
                                     d.metadata["article_id"] = match.group(2)
@@ -324,7 +324,6 @@ def main_app():
         q = col1.text_input("Αναζήτηση (π.χ. 'Άρθρο 125')", key="file_search_input")
         if col2.button("Αναζήτηση", key="btn_file_search"):
             vs = PineconeVectorStore(index_name=index_name, embedding=embeddings)
-            # SEARCH BOTH PRIVATE AND PUBLIC
             target_ids = [current_firm, "Public_Legal_Library"]
             
             res = vs.similarity_search(q, k=10, filter={"firm_id": {"$in": target_ids}})
@@ -334,12 +333,10 @@ def main_app():
             for i, d in enumerate(res):
                 fname = d.metadata.get("file_name", "Άγνωστο")
                 fid = d.metadata.get("firm_id")
-                # Show explicit Article ID if we found it
                 art_tag = f" [Art. {d.metadata.get('article_id')}]" if d.metadata.get('article_id') else ""
                 
                 with st.expander(f"{i+1}. {fname}{art_tag} ({'PUBLIC' if 'Public' in fid else 'PRIVATE'})"):
                     st.text(d.page_content)
-                    # Only Admin can delete Public files
                     if "Public" in fid and "ADMIN" not in current_firm:
                         st.caption("🔒 Read-only (Public Library)")
                     else:
@@ -392,22 +389,26 @@ def main_app():
                 with st.chat_message("assistant"):
                     try:
                         vs = PineconeVectorStore(index_name=index_name, embedding=embeddings)
-                        # SEARCH: Current Firm + Public Library
                         target_ids = [current_firm, "Public_Legal_Library"]
                         search_filter = {"firm_id": {"$in": target_ids}}
                         
-                        retriever = vs.as_retriever(search_kwargs={'filter': search_filter, 'k': 6}) # Increase k to find right article
+                        # Increased K to make sure we find the right article among many
+                        retriever = vs.as_retriever(search_kwargs={'filter': search_filter, 'k': 8})
                         db_docs = retriever.invoke(prompt)
                         db_context = str(db_docs)
                         pdf_context = st.session_state.analysis_text[:20000] if st.session_state.analysis_text else ""
                         final_context = f"DATABASE RESULTS:\n{db_context}\n\nUPLOADED DOCUMENT:\n{pdf_context}"
                         
+                        # --- STRICT PROMPT TO STOP HALLUCINATIONS ---
                         system_prompt = """Είσαι ένας έμπειρος Νομικός Σύμβουλος.
                         
-                        ΟΔΗΓΙΕΣ ΓΙΑ ΑΡΘΡΑ ΝΟΜΩΝ:
-                        1. Αν ρωτάνε για άρθρο (π.χ. 125), ΕΛΕΓΞΕ ΤΑ 'DATABASE RESULTS' για κείμενο που ξεκινά με 'Άρθρο : 125' ή 'Άρθρο 125'.
-                        2. Αν το βρεις, παράθεσέ το ακριβώς.
-                        3. Αν ΔΕΝ το βρεις, πες 'Δεν βρέθηκε στη βάση' και μετά δώσε τη γενική γνώση σου.
+                        ΚΑΝΟΝΑΣ 1 (ΑΥΣΤΗΡΟΣ): 
+                        Αν ο χρήστης ζητάει ΣΥΓΚΕΚΡΙΜΕΝΟ ΑΡΘΡΟ ΝΟΜΟΥ (π.χ. 'Τι λέει το Άρθρο 126;'), ΨΑΞΕ το κείμενο μέσα στα 'DATABASE RESULTS'.
+                        - Αν το κείμενο του άρθρου ΔΕΝ υπάρχει αυτολεξεί στα αποτελέσματα, ΠΡΕΠΕΙ ΝΑ ΑΠΑΝΤΗΣΕΙΣ: "Το κείμενο του Άρθρου [Χ] δεν βρέθηκε στη βάση δεδομένων."
+                        - ΑΠΑΓΟΡΕΥΕΤΑΙ ΝΑ ΤΟ ΜΑΝΤΕΨΕΙΣ. ΑΠΑΓΟΡΕΥΕΤΑΙ ΝΑ ΓΡΑΨΕΙΣ ΚΕΙΜΕΝΟ ΠΟΥ ΔΕΝ ΒΛΕΠΕΙΣ.
+                        
+                        ΚΑΝΟΝΑΣ 2:
+                        Για γενικές ερωτήσεις (π.χ. 'Τι είναι η έξωση;'), απάντησε ελεύθερα με τις νομικές σου γνώσεις.
                         
                         FORMAT:
                         [Απάντηση]
@@ -415,7 +416,7 @@ def main_app():
                         [Κενή Γραμμή]
                         |||SOURCE:[DOC] (αν από PDF)
                         |||SOURCE:[DB] (αν από Βάση)
-                        |||SOURCE:[AI] (αν Γενική Γνώση)
+                        |||SOURCE:[AI] (αν Γενική Γνώση ή Δεν Βρέθηκε)
                         
                         CONTEXT: {context}
                         QUESTION: {question}"""
