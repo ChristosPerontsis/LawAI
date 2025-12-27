@@ -440,22 +440,66 @@ def main_app():
     with t5:
         st.subheader("Αυτόματη Σύνταξη Εξωδίκου")
         with st.form("draft"):
-            c1, c2, c3 = st.columns(3); l_name = c1.text_input("Εκμισθωτής", key="l_name"); l_father = c2.text_input("Πατρώνυμο", key="l_father"); l_afm = c3.text_input("ΑΦΜ", key="l_afm")
-            l_addr = st.text_input("Διεύθυνση", key="l_addr"); t1, t2, t3 = st.columns(3); t_name = t1.text_input("Μισθωτής", key="t_name"); t_father = t2.text_input("Πατρώνυμο", key="t_father")
-            t_afm = t3.text_input("ΑΦΜ", key="t_afm"); prop = st.text_input("Μίσθιο", key="prop_addr"); date = st.date_input("Ημ. Μίσθωσης", key="contr_date"); m1, m2 = st.columns(2); amt = m1.text_input("Ποσό", key="amt_val"); mths = m2.text_input("Μήνες", key="mths_val"); lawyer = st.text_input("Δικηγόρος", key="law_name"); dets = st.text_area("Στοιχεία Δικηγόρου", key="law_dets")
-            if st.form_submit_button("Δημιουργία Εγγράφου"): l_gen = auto_genitive(l_name); t_gen = auto_genitive(t_name); doc = f"""ΕΝΩΠΙΟΝ ΠΑΝΤΟΣ ΑΡΜΟΔΙΟΥ ΔΙΚΑΣΤΗΡΙΟΥ...\n\n{l_gen} {l_father}...\nΚΑΤΑ\n{t_gen} {t_father}...\n\n{lawyer}\n{dets}"""; st.code(doc, language="markdown")
+            c1, c2, c3 = st.columns(3)
+            l_name = c1.text_input("Εκμισθωτής", key="l_name")
+            l_father = c2.text_input("Πατρώνυμο", key="l_father")
+            l_afm = c3.text_input("ΑΦΜ", key="l_afm")
+            l_addr = st.text_input("Διεύθυνση", key="l_addr")
+            
+            t1_col, t2_col, t3_col = st.columns(3)
+            t_name = t1_col.text_input("Μισθωτής", key="t_name")
+            t_father = t2_col.text_input("Πατρώνυμο", key="t_father")
+            t_afm = t3_col.text_input("ΑΦΜ", key="t_afm")
+            
+            prop = st.text_input("Μίσθιο", key="prop_addr")
+            date = st.date_input("Ημ. Μίσθωσης", key="contr_date")
+            
+            m1, m2 = st.columns(2)
+            amt = m1.text_input("Ποσό", key="amt_val")
+            mths = m2.text_input("Μήνες", key="mths_val")
+            
+            lawyer = st.text_input("Δικηγόρος", key="law_name")
+            dets = st.text_area("Στοιχεία Δικηγόρου", key="law_dets")
+            
+            if st.form_submit_button("Δημιουργία Εγγράφου"):
+                l_gen = auto_genitive(l_name)
+                t_gen = auto_genitive(t_name)
+                doc = f"""ΕΝΩΠΙΟΝ ΠΑΝΤΟΣ ΑΡΜΟΔΙΟΥ ΔΙΚΑΣΤΗΡΙΟΥ...\n\n{l_gen} {l_father}...\nΚΑΤΑ\n{t_gen} {t_father}...\n\n{lawyer}\n{dets}"""
+                st.code(doc, language="markdown")
 
     with t6:
         st.subheader("Παρακολούθηση Προθεσμιών")
         with st.expander("Προσθήκη"):
-            with st.form("w"): n = st.text_input("Όνομα", key="w_name"); e = st.text_input("Email", key="w_email"); d = st.number_input("Ποσό", key="w_debt"); sd = st.date_input("Ημερομηνία", key="w_date")
-            if st.form_submit_button("Καταγραφή"): deadline = sd + datetime.timedelta(days=15); st.session_state.active_evictions.append({"id": len(st.session_state.active_evictions), "name": n, "email": e, "debt": d, "deadline": deadline, "status": "Pending"}); st.rerun()
+            with st.form("w"):
+                n = st.text_input("Όνομα", key="w_name")
+                e = st.text_input("Email", key="w_email")
+                d = st.number_input("Ποσό", key="w_debt")
+                sd = st.date_input("Ημερομηνία", key="w_date")
+                
+                if st.form_submit_button("Καταγραφή"):
+                    deadline = sd + datetime.timedelta(days=15)
+                    st.session_state.active_evictions.append({
+                        "id": len(st.session_state.active_evictions),
+                        "name": n, 
+                        "email": e, 
+                        "debt": d, 
+                        "deadline": deadline, 
+                        "status": "Pending"
+                    })
+                    st.rerun()
+        
         cases = st.session_state.active_evictions
         for c in cases:
             if c["status"] == "Pending":
-                with st.container(): c1, c2, c3, c4 = st.columns([2,2,2,2]); c1.write(f"**{c['name']}**"); c2.write(f"Λήξη: {c['deadline']}"); 
-                if c3.button("Email", key=f"e_{c['id']}"): show_email_draft(c['name'], c['email'], c['debt'], str(c['deadline']), current_firm)
-                if c4.button("Εξοφλήθη", key=f"p_{c['id']}"): c["status"] = "Paid"; st.rerun()
+                with st.container():
+                    c1, c2, c3, c4 = st.columns([2,2,2,2])
+                    c1.write(f"**{c['name']}**")
+                    c2.write(f"Λήξη: {c['deadline']}")
+                    if c3.button("Email", key=f"e_{c['id']}"):
+                        show_email_draft(c['name'], c['email'], c['debt'], str(c['deadline']), current_firm)
+                    if c4.button("Εξοφλήθη", key=f"p_{c['id']}"):
+                        c["status"] = "Paid"
+                        st.rerun()
 
 if "logged_in" not in st.session_state: st.session_state['logged_in'] = False
 if not st.session_state['logged_in']: login_page()
