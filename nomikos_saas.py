@@ -446,10 +446,10 @@ def main_app():
             l_afm = c3.text_input("ΑΦΜ", key="l_afm")
             l_addr = st.text_input("Διεύθυνση", key="l_addr")
             
-            t1_col, t2_col, t3_col = st.columns(3)
-            t_name = t1_col.text_input("Μισθωτής", key="t_name")
-            t_father = t2_col.text_input("Πατρώνυμο", key="t_father")
-            t_afm = t3_col.text_input("ΑΦΜ", key="t_afm")
+            t1, t2, t3 = st.columns(3)
+            t_name = t1.text_input("Μισθωτής", key="t_name")
+            t_father = t2.text_input("Πατρώνυμο", key="t_father")
+            t_afm = t3.text_input("ΑΦΜ", key="t_afm")
             
             prop = st.text_input("Μίσθιο", key="prop_addr")
             date = st.date_input("Ημ. Μίσθωσης", key="contr_date")
