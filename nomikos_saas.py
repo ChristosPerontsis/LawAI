@@ -15,6 +15,7 @@ from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_core.documents import Document # Added for JSON support
 from pinecone import Pinecone
 from sqlalchemy import create_engine, text
 import google.generativeai as genai
@@ -55,10 +56,7 @@ def hash_password(password):
     return hashlib.sha256(str.encode(password)).hexdigest()
 
 def load_user_data(username):
-    # Hardcoded Admin for initial setup
-    if username == "admin":
-        return {"pass": hash_password("admin"), "firm_id": "ADMIN_Δημόσια_Βιβλιοθήκη", "role": "admin"}
-
+    # 1. Try Supabase
     engine = get_db_connection()
     if engine:
         try:
@@ -68,14 +66,11 @@ def load_user_data(username):
                     return {"pass": result[1], "firm_id": result[2], "role": result[3]}
         except: pass
     
-    # Local JSON Fallback
-    if not os.path.exists(USER_DB_FILE):
-        return None
-    try:
-        with open(USER_DB_FILE, 'r') as f:
-            users = json.load(f)
-            return users.get(username)
-    except: return None
+    # 2. Hardcoded Admin Fallback
+    if username == "admin":
+        return {"pass": hash_password("admin"), "firm_id": "ADMIN_Δημόσια_Βιβλιοθήκη", "role": "admin"}
+
+    return None
 
 def create_user(username, password, firm_name):
     hashed_pw = hash_password(password)
@@ -92,15 +87,7 @@ def create_user(username, password, firm_name):
                 conn.commit()
                 return True
         except: return False
-
-    if os.path.exists(USER_DB_FILE):
-        with open(USER_DB_FILE, 'r') as f: users = json.load(f)
-    else: users = {}
-    
-    if username in users: return False
-    users[username] = {"pass": hashed_pw, "firm_id": firm_name, "role": "user"}
-    with open(USER_DB_FILE, 'w') as f: json.dump(users, f)
-    return True
+    return False
 
 def load_sessions():
     if not os.path.exists(SESSION_FILE): return {}
@@ -170,7 +157,7 @@ def login_page():
                                 st.session_state['login_ts'] = new_ts
                                 st.rerun()
                             else:
-                                st.error("Λάθος στοιχεία.")
+                                st.error("Λάθος στοιχεία ή Αδυναμία σύνδεσης στη Βάση.")
             with tab2:
                 with st.form("signup"):
                     new_u = st.text_input("Νέο Username", key="signup_u")
@@ -181,9 +168,9 @@ def login_page():
                         with st.spinner("Δημιουργία λογαριασμού..."):
                             time.sleep(1)
                             if create_user(new_u, new_p, firm):
-                                st.success("Επιτυχής Εγγραφή! Συνδεθείτε.")
+                                st.success("Επιτυχής Εγγραφή! Τώρα μπορείτε να συνδεθείτε.")
                             else:
-                                st.error("Το Username υπάρχει ήδη.")
+                                st.error("Το Username υπάρχει ήδη ή η Βάση Δεδομένων δεν είναι συνδεδεμένη.")
 
 # --- 4. MAIN APPLICATION ---
 def main_app():
@@ -259,64 +246,69 @@ def main_app():
         # --- LOGIC SWITCH BASED ON USER ROLE ---
         if "ADMIN" in current_firm:
             st.info("🔓 **ADMIN MODE**: Τα αρχεία που ανεβάζετε εδώ θα είναι ορατά σε ΟΛΟΥΣ τους χρήστες (Public Library).")
-            splitter_type = st.radio("Τύπος Εγγράφου:", ["Κώδικας/Νόμοι (Smart Article Splitter)", "Απλό Έγγραφο"], horizontal=True)
-        else:
-            splitter_type = "Απλό Έγγραφο"
-
+        
         with st.container():
-            files = st.file_uploader("Επιλέξτε αρχεία PDF", accept_multiple_files=True, key="uploader")
+            # ACCEPT JSON AND PDF
+            files = st.file_uploader("Επιλέξτε αρχεία (PDF ή JSON)", type=["pdf", "json"], accept_multiple_files=True, key="uploader")
+            
             if st.button("🔒 Αποθήκευση στη Βάση", key="btn_upload") and files:
                 with st.spinner("Επεξεργασία & Καταχώρηση..."):
                     for f in files:
                         try:
-                            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-                                tmp.write(f.read())
-                                path = tmp.name
-                            
-                            loader = PyPDFLoader(path)
-                            docs = loader.load()
                             clean_name = f.name
-                            
-                            # --- IMPROVED SURGEON SPLITTER ---
-                            if splitter_type == "Κώδικας/Νόμοι (Smart Article Splitter)":
-                                # Includes spaces, newlines, and colons to catch "Άρθρο : 126" and "Άρθρο 126"
-                                splitter = RecursiveCharacterTextSplitter(
-                                    separators=[
-                                        "\nΆρθρο :", "\nΑΡΘΡΟ :", "\nΆρθρο:", "\nΑΡΘΡΟ:", 
-                                        "\nΆρθρο", "\nΑΡΘΡΟ", 
-                                        "Άρθρο :", "ΑΡΘΡΟ :", 
-                                        "Άρθρο ", "ΑΡΘΡΟ ",
-                                        "\n\n", "\n"
-                                    ],
-                                    chunk_size=2500, # Increased chunk size to keep full articles together
-                                    chunk_overlap=100,
-                                    keep_separator=True
-                                )
-                            else:
-                                splitter = RecursiveCharacterTextSplitter(chunk_size=1500, chunk_overlap=200)
-                            
-                            splits = splitter.split_documents(docs)
-                            
-                            # --- PUBLIC vs PRIVATE LOGIC ---
                             upload_type = "public" if "ADMIN" in current_firm else "private"
                             target_id = "Public_Legal_Library" if "ADMIN" in current_firm else current_firm
-                            
-                            for d in splits:
-                                d.metadata["firm_id"] = target_id
-                                d.metadata["source_type"] = upload_type
-                                d.metadata["file_name"] = clean_name
-                                
-                                # IMPROVED REGEX for Metadata
-                                # Captures "Άρθρο : 126" or "Άρθρο 126"
-                                match = re.search(r'(Άρθρο|ΑΡΘΡΟ)\s*:?\s*(\d+)', d.page_content)
-                                if match:
-                                    d.metadata["article_id"] = match.group(2)
 
-                            PineconeVectorStore.from_documents(splits, embeddings, index_name=index_name)
-                            os.unlink(path)
-                            st.session_state.current_focus_file = clean_name
-                        except Exception as e: st.error(f"Error: {e}")
-                st.success(f"Επιτυχία! Το αρχείο ανέβηκε στην {'Δημόσια' if 'ADMIN' in current_firm else 'Ιδιωτική'} Βιβλιοθήκη.")
+                            # Auto-delete duplicate
+                            try:
+                                pc = Pinecone(api_key=st.secrets["PINECONE_API_KEY"])
+                                pc.Index(index_name).delete(filter={"firm_id": target_id, "file_name": clean_name})
+                            except: pass
+
+                            # --- JSON LOGIC (PRE-PROCESSED LAWS) ---
+                            if f.name.endswith(".json"):
+                                data = json.load(f)
+                                docs_to_upload = []
+                                for entry in data:
+                                    # entry has: id, title, text, source
+                                    d = Document(
+                                        page_content=entry["text"],
+                                        metadata={
+                                            "firm_id": target_id,
+                                            "source_type": upload_type,
+                                            "file_name": clean_name, # or entry["source"]
+                                            "article_id": entry["id"]
+                                        }
+                                    )
+                                    docs_to_upload.append(d)
+                                
+                                # Batch Upload to Pinecone
+                                PineconeVectorStore.from_documents(docs_to_upload, embeddings, index_name=index_name)
+                                st.success(f"✅ JSON '{clean_name}' uploaded successfully ({len(docs_to_upload)} articles).")
+
+                            # --- PDF LOGIC (NORMAL FILES) ---
+                            elif f.name.endswith(".pdf"):
+                                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+                                    tmp.write(f.read())
+                                    path = tmp.name
+                                
+                                loader = PyPDFLoader(path)
+                                docs = loader.load()
+                                
+                                # Standard Splitter for regular docs
+                                splitter = RecursiveCharacterTextSplitter(chunk_size=1500, chunk_overlap=200)
+                                splits = splitter.split_documents(docs)
+                                
+                                for d in splits:
+                                    d.metadata["firm_id"] = target_id
+                                    d.metadata["source_type"] = upload_type
+                                    d.metadata["file_name"] = clean_name
+
+                                PineconeVectorStore.from_documents(splits, embeddings, index_name=index_name)
+                                os.unlink(path)
+                                st.success(f"✅ PDF '{clean_name}' uploaded successfully.")
+                                
+                        except Exception as e: st.error(f"Error processing {f.name}: {e}")
 
     with t2:
         st.header("Διαχείριση Εγγράφων & Έλεγχος")
@@ -325,26 +317,20 @@ def main_app():
         if col2.button("Αναζήτηση", key="btn_file_search"):
             vs = PineconeVectorStore(index_name=index_name, embedding=embeddings)
             target_ids = [current_firm, "Public_Legal_Library"]
-            
             res = vs.similarity_search(q, k=10, filter={"firm_id": {"$in": target_ids}})
-            
             if not res: st.warning("Δεν βρέθηκαν αποτελέσματα.")
-            
             for i, d in enumerate(res):
                 fname = d.metadata.get("file_name", "Άγνωστο")
                 fid = d.metadata.get("firm_id")
                 art_tag = f" [Art. {d.metadata.get('article_id')}]" if d.metadata.get('article_id') else ""
-                
                 with st.expander(f"{i+1}. {fname}{art_tag} ({'PUBLIC' if 'Public' in fid else 'PRIVATE'})"):
                     st.text(d.page_content)
-                    if "Public" in fid and "ADMIN" not in current_firm:
-                        st.caption("🔒 Read-only (Public Library)")
+                    if "Public" in fid and "ADMIN" not in current_firm: st.caption("🔒 Read-only (Public Library)")
                     else:
                         if st.button("Διαγραφή", key=f"del_{i}"):
                             pc = Pinecone(api_key=st.secrets["PINECONE_API_KEY"])
                             pc.Index(index_name).delete(filter={"firm_id": fid, "file_name": fname})
-                            st.toast("Deleted")
-                            st.rerun()
+                            st.toast("Deleted"); st.rerun()
 
     with t3:
         st.header("Νομικά Εργαλεία")
@@ -391,24 +377,18 @@ def main_app():
                         vs = PineconeVectorStore(index_name=index_name, embedding=embeddings)
                         target_ids = [current_firm, "Public_Legal_Library"]
                         search_filter = {"firm_id": {"$in": target_ids}}
-                        
-                        # Increased K to make sure we find the right article among many
                         retriever = vs.as_retriever(search_kwargs={'filter': search_filter, 'k': 8})
                         db_docs = retriever.invoke(prompt)
                         db_context = str(db_docs)
                         pdf_context = st.session_state.analysis_text[:20000] if st.session_state.analysis_text else ""
                         final_context = f"DATABASE RESULTS:\n{db_context}\n\nUPLOADED DOCUMENT:\n{pdf_context}"
                         
-                        # --- STRICT PROMPT TO STOP HALLUCINATIONS ---
                         system_prompt = """Είσαι ένας έμπειρος Νομικός Σύμβουλος.
                         
-                        ΚΑΝΟΝΑΣ 1 (ΑΥΣΤΗΡΟΣ): 
-                        Αν ο χρήστης ζητάει ΣΥΓΚΕΚΡΙΜΕΝΟ ΑΡΘΡΟ ΝΟΜΟΥ (π.χ. 'Τι λέει το Άρθρο 126;'), ΨΑΞΕ το κείμενο μέσα στα 'DATABASE RESULTS'.
-                        - Αν το κείμενο του άρθρου ΔΕΝ υπάρχει αυτολεξεί στα αποτελέσματα, ΠΡΕΠΕΙ ΝΑ ΑΠΑΝΤΗΣΕΙΣ: "Το κείμενο του Άρθρου [Χ] δεν βρέθηκε στη βάση δεδομένων."
-                        - ΑΠΑΓΟΡΕΥΕΤΑΙ ΝΑ ΤΟ ΜΑΝΤΕΨΕΙΣ. ΑΠΑΓΟΡΕΥΕΤΑΙ ΝΑ ΓΡΑΨΕΙΣ ΚΕΙΜΕΝΟ ΠΟΥ ΔΕΝ ΒΛΕΠΕΙΣ.
-                        
-                        ΚΑΝΟΝΑΣ 2:
-                        Για γενικές ερωτήσεις (π.χ. 'Τι είναι η έξωση;'), απάντησε ελεύθερα με τις νομικές σου γνώσεις.
+                        ΟΔΗΓΙΕΣ ΓΙΑ ΑΡΘΡΑ ΝΟΜΩΝ:
+                        1. Αν ρωτάνε για άρθρο (π.χ. 125), ΕΛΕΓΞΕ ΤΑ 'DATABASE RESULTS' για κείμενο που ξεκινά με 'Άρθρο : 125' ή 'Άρθρο 125'.
+                        2. Αν το βρεις, παράθεσέ το ακριβώς.
+                        3. Αν ΔΕΝ το βρεις, πες 'Δεν βρέθηκε στη βάση' και μετά δώσε τη γενική γνώση σου.
                         
                         FORMAT:
                         [Απάντηση]
@@ -416,7 +396,7 @@ def main_app():
                         [Κενή Γραμμή]
                         |||SOURCE:[DOC] (αν από PDF)
                         |||SOURCE:[DB] (αν από Βάση)
-                        |||SOURCE:[AI] (αν Γενική Γνώση ή Δεν Βρέθηκε)
+                        |||SOURCE:[AI] (αν Γενική Γνώση)
                         
                         CONTEXT: {context}
                         QUESTION: {question}"""
@@ -441,54 +421,17 @@ def main_app():
     with t5:
         st.subheader("Αυτόματη Σύνταξη Εξωδίκου")
         with st.form("draft"):
-            c1, c2, c3 = st.columns(3)
-            l_name = c1.text_input("Εκμισθωτής", key="l_name")
-            l_father = c2.text_input("Πατρώνυμο", key="l_father")
-            l_afm = c3.text_input("ΑΦΜ", key="l_afm")
-            l_addr = st.text_input("Διεύθυνση", key="l_addr")
-            
-            t1, t2, t3 = st.columns(3)
-            t_name = t1.text_input("Μισθωτής", key="t_name")
-            t_father = t2.text_input("Πατρώνυμο", key="t_father")
-            t_afm = t3.text_input("ΑΦΜ", key="t_afm")
-            
-            prop = st.text_input("Μίσθιο", key="prop_addr")
-            date = st.date_input("Ημ. Μίσθωσης", key="contr_date")
-            
-            m1, m2 = st.columns(2)
-            amt = m1.text_input("Ποσό", key="amt_val")
-            mths = m2.text_input("Μήνες", key="mths_val")
-            
-            lawyer = st.text_input("Δικηγόρος", key="law_name")
-            dets = st.text_area("Στοιχεία Δικηγόρου", key="law_dets")
-            
-            if st.form_submit_button("Δημιουργία Εγγράφου"):
-                l_gen = auto_genitive(l_name)
-                t_gen = auto_genitive(t_name)
-                doc = f"""ΕΝΩΠΙΟΝ ΠΑΝΤΟΣ ΑΡΜΟΔΙΟΥ ΔΙΚΑΣΤΗΡΙΟΥ...\n\n{l_gen} {l_father}...\nΚΑΤΑ\n{t_gen} {t_father}...\n\n{lawyer}\n{dets}"""
-                st.code(doc, language="markdown")
+            c1, c2, c3 = st.columns(3); l_name = c1.text_input("Εκμισθωτής", key="l_name"); l_father = c2.text_input("Πατρώνυμο", key="l_father"); l_afm = c3.text_input("ΑΦΜ", key="l_afm")
+            l_addr = st.text_input("Διεύθυνση", key="l_addr"); t1, t2, t3 = st.columns(3); t_name = t1.text_input("Μισθωτής", key="t_name"); t_father = t2.text_input("Πατρώνυμο", key="t_father")
+            t_afm = t3.text_input("ΑΦΜ", key="t_afm"); prop = st.text_input("Μίσθιο", key="prop_addr"); date = st.date_input("Ημ. Μίσθωσης", key="contr_date"); m1, m2 = st.columns(2); amt = m1.text_input("Ποσό", key="amt_val"); mths = m2.text_input("Μήνες", key="mths_val"); lawyer = st.text_input("Δικηγόρος", key="law_name"); dets = st.text_area("Στοιχεία Δικηγόρου", key="law_dets")
+            if st.form_submit_button("Δημιουργία Εγγράφου"): l_gen = auto_genitive(l_name); t_gen = auto_genitive(t_name); doc = f"""ΕΝΩΠΙΟΝ ΠΑΝΤΟΣ ΑΡΜΟΔΙΟΥ ΔΙΚΑΣΤΗΡΙΟΥ...\n\n{l_gen} {l_father}...\nΚΑΤΑ\n{t_gen} {t_father}...\n\n{lawyer}\n{dets}"""; st.code(doc, language="markdown")
 
     with t6:
         st.subheader("Παρακολούθηση Προθεσμιών")
         with st.expander("Προσθήκη"):
             with st.form("w"):
-                n = st.text_input("Όνομα", key="w_name")
-                e = st.text_input("Email", key="w_email")
-                d = st.number_input("Ποσό", key="w_debt")
-                sd = st.date_input("Ημερομηνία", key="w_date")
-                
-                if st.form_submit_button("Καταγραφή"):
-                    deadline = sd + datetime.timedelta(days=15)
-                    st.session_state.active_evictions.append({
-                        "id": len(st.session_state.active_evictions),
-                        "name": n, 
-                        "email": e, 
-                        "debt": d, 
-                        "deadline": deadline, 
-                        "status": "Pending"
-                    })
-                    st.rerun()
-        
+                n = st.text_input("Όνομα", key="w_name"); e = st.text_input("Email", key="w_email"); d = st.number_input("Ποσό", key="w_debt"); sd = st.date_input("Ημερομηνία", key="w_date")
+                if st.form_submit_button("Καταγραφή"): deadline = sd + datetime.timedelta(days=15); st.session_state.active_evictions.append({"id": len(st.session_state.active_evictions), "name": n, "email": e, "debt": d, "deadline": deadline, "status": "Pending"}); st.rerun()
         cases = st.session_state.active_evictions
         for c in cases:
             if c["status"] == "Pending":
