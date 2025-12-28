@@ -14,8 +14,7 @@ from langchain_pinecone import PineconeVectorStore
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_core.documents import Document # Added for JSON support
+from langchain_core.documents import Document 
 from pinecone import Pinecone
 from sqlalchemy import create_engine, text
 import google.generativeai as genai
@@ -56,7 +55,11 @@ def hash_password(password):
     return hashlib.sha256(str.encode(password)).hexdigest()
 
 def load_user_data(username):
-    # 1. Try Supabase
+    # 1. Hardcoded Admin
+    if username == "admin":
+        return {"pass": hash_password("admin"), "firm_id": "ADMIN_Δημόσια_Βιβλιοθήκη", "role": "admin"}
+    
+    # 2. Try DB
     engine = get_db_connection()
     if engine:
         try:
@@ -66,15 +69,19 @@ def load_user_data(username):
                     return {"pass": result[1], "firm_id": result[2], "role": result[3]}
         except: pass
     
-    # 2. Hardcoded Admin Fallback
-    if username == "admin":
-        return {"pass": hash_password("admin"), "firm_id": "ADMIN_Δημόσια_Βιβλιοθήκη", "role": "admin"}
-
-    return None
+    # 3. Local JSON Fallback
+    if not os.path.exists(USER_DB_FILE):
+        return None
+    try:
+        with open(USER_DB_FILE, 'r') as f:
+            users = json.load(f)
+            return users.get(username)
+    except: return None
 
 def create_user(username, password, firm_name):
     hashed_pw = hash_password(password)
     engine = get_db_connection()
+    
     if engine:
         try:
             with engine.connect() as conn:
@@ -86,8 +93,16 @@ def create_user(username, password, firm_name):
                 )
                 conn.commit()
                 return True
-        except: return False
-    return False
+        except: pass
+            
+    if os.path.exists(USER_DB_FILE):
+        with open(USER_DB_FILE, 'r') as f: users = json.load(f)
+    else: users = {}
+    
+    if username in users: return False
+    users[username] = {"pass": hashed_pw, "firm_id": firm_name, "role": "user"}
+    with open(USER_DB_FILE, 'w') as f: json.dump(users, f)
+    return True
 
 def load_sessions():
     if not os.path.exists(SESSION_FILE): return {}
@@ -157,7 +172,7 @@ def login_page():
                                 st.session_state['login_ts'] = new_ts
                                 st.rerun()
                             else:
-                                st.error("Λάθος στοιχεία ή Αδυναμία σύνδεσης στη Βάση.")
+                                st.error("Λάθος στοιχεία.")
             with tab2:
                 with st.form("signup"):
                     new_u = st.text_input("Νέο Username", key="signup_u")
@@ -242,8 +257,6 @@ def main_app():
     
     with t1:
         st.header("Εισαγωγή Νέων Εγγράφων")
-        
-        # --- LOGIC SWITCH BASED ON USER ROLE ---
         if "ADMIN" in current_firm:
             st.info("🔓 **ADMIN MODE**: Τα αρχεία που ανεβάζετε εδώ θα είναι ορατά σε ΟΛΟΥΣ τους χρήστες (Public Library).")
         
@@ -259,54 +272,66 @@ def main_app():
                             upload_type = "public" if "ADMIN" in current_firm else "private"
                             target_id = "Public_Legal_Library" if "ADMIN" in current_firm else current_firm
 
-                            # Auto-delete duplicate
                             try:
                                 pc = Pinecone(api_key=st.secrets["PINECONE_API_KEY"])
                                 pc.Index(index_name).delete(filter={"firm_id": target_id, "file_name": clean_name})
                             except: pass
 
-                            # --- JSON LOGIC (PRE-PROCESSED LAWS) ---
                             if f.name.endswith(".json"):
-                                data = json.load(f)
-                                docs_to_upload = []
-                                for entry in data:
-                                    # entry has: id, title, text, source
-                                    d = Document(
-                                        page_content=entry["text"],
-                                        metadata={
-                                            "firm_id": target_id,
-                                            "source_type": upload_type,
-                                            "file_name": clean_name, # or entry["source"]
-                                            "article_id": entry["id"]
-                                        }
-                                    )
-                                    docs_to_upload.append(d)
-                                
-                                # Batch Upload to Pinecone
-                                PineconeVectorStore.from_documents(docs_to_upload, embeddings, index_name=index_name)
-                                st.success(f"✅ JSON '{clean_name}' uploaded successfully ({len(docs_to_upload)} articles).")
+                                try:
+                                    raw_text = f.read().decode("utf-8").strip()
+                                    if raw_text.startswith("{") and not raw_text.startswith("["):
+                                        raw_text = f"[{raw_text}]"
+                                    
+                                    data = json.loads(raw_text)
+                                    if isinstance(data, dict): data = [data]
+                                    
+                                    docs_to_upload = []
+                                    for entry in data:
+                                        d = Document(
+                                            page_content=entry["text"],
+                                            metadata={
+                                                "firm_id": target_id,
+                                                "source_type": upload_type,
+                                                "file_name": clean_name, 
+                                                "article_id": entry["id"]
+                                            }
+                                        )
+                                        docs_to_upload.append(d)
+                                    
+                                    if docs_to_upload:
+                                        PineconeVectorStore.from_documents(docs_to_upload, embeddings, index_name=index_name)
+                                        st.success(f"✅ JSON '{clean_name}' uploaded successfully ({len(docs_to_upload)} articles).")
+                                    else:
+                                        st.warning("JSON file was empty.")
 
-                            # --- PDF LOGIC (NORMAL FILES) ---
+                                except json.JSONDecodeError as e:
+                                    st.error(f"JSON Error: {e}. Please ensure the file is valid JSON.")
+                                    continue
+
                             elif f.name.endswith(".pdf"):
                                 with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
                                     tmp.write(f.read())
                                     path = tmp.name
-                                
-                                loader = PyPDFLoader(path)
-                                docs = loader.load()
-                                
-                                # Standard Splitter for regular docs
-                                splitter = RecursiveCharacterTextSplitter(chunk_size=1500, chunk_overlap=200)
-                                splits = splitter.split_documents(docs)
-                                
-                                for d in splits:
-                                    d.metadata["firm_id"] = target_id
-                                    d.metadata["source_type"] = upload_type
-                                    d.metadata["file_name"] = clean_name
-
-                                PineconeVectorStore.from_documents(splits, embeddings, index_name=index_name)
+                                loader = PyPDFLoader(path); docs = loader.load()
+                                full_text = "\n".join([page.page_content for page in docs])
+                                docs_to_upload = []
+                                pattern = r'(Άρθρο\s*:?\s*\d+)' 
+                                parts = re.split(pattern, full_text)
+                                for i in range(1, len(parts), 2):
+                                    if i + 1 < len(parts):
+                                        title = parts[i].strip()
+                                        body = parts[i+1].strip()
+                                        body = re.sub(r'\s+', ' ', body).strip()
+                                        full_entry = title + "\n" + body
+                                        match = re.search(r'\d+', title)
+                                        art_id = match.group() if match else "0"
+                                        d = Document(page_content=full_entry, metadata={"firm_id": target_id, "source_type": upload_type, "file_name": clean_name, "article_id": art_id})
+                                        docs_to_upload.append(d)
+                                if docs_to_upload:
+                                    PineconeVectorStore.from_documents(docs_to_upload, embeddings, index_name=index_name)
+                                    st.success(f"✅ PDF '{clean_name}' uploaded successfully.")
                                 os.unlink(path)
-                                st.success(f"✅ PDF '{clean_name}' uploaded successfully.")
                                 
                         except Exception as e: st.error(f"Error processing {f.name}: {e}")
 
@@ -377,6 +402,15 @@ def main_app():
                         vs = PineconeVectorStore(index_name=index_name, embedding=embeddings)
                         target_ids = [current_firm, "Public_Legal_Library"]
                         search_filter = {"firm_id": {"$in": target_ids}}
+
+                        # --- SMART ID FILTERING (The Magic Fix) ---
+                        # Detect "Article 126" or "Άρθρο 126" and force exact match
+                        match = re.search(r'(?:άρθρο|αρθρο|Article)\s*:?\s*(\d+)', prompt, re.IGNORECASE)
+                        if match:
+                            article_num = match.group(1)
+                            search_filter["article_id"] = {"$eq": article_num}
+                            # st.toast(f"🎯 Smart Search: Filtering for Article ID {article_num}")
+
                         retriever = vs.as_retriever(search_kwargs={'filter': search_filter, 'k': 8})
                         db_docs = retriever.invoke(prompt)
                         db_context = str(db_docs)
@@ -385,15 +419,13 @@ def main_app():
                         
                         system_prompt = """Είσαι ένας έμπειρος Νομικός Σύμβουλος.
                         
-                        ΟΔΗΓΙΕΣ ΓΙΑ ΑΡΘΡΑ ΝΟΜΩΝ:
-                        1. Αν ρωτάνε για άρθρο (π.χ. 125), ΕΛΕΓΞΕ ΤΑ 'DATABASE RESULTS' για κείμενο που ξεκινά με 'Άρθρο : 125' ή 'Άρθρο 125'.
+                        ΟΔΗΓΙΕΣ:
+                        1. Αν ρωτάνε για ΣΥΓΚΕΚΡΙΜΕΝΟ ΑΡΘΡΟ, ΨΑΞΕ το κείμενο στα 'DATABASE RESULTS'.
                         2. Αν το βρεις, παράθεσέ το ακριβώς.
-                        3. Αν ΔΕΝ το βρεις, πες 'Δεν βρέθηκε στη βάση' και μετά δώσε τη γενική γνώση σου.
+                        3. Αν ΔΕΝ το βρεις, ΠΡΟΣΕΧΕ: Μην μαντέψεις το κείμενο του νόμου. Πες 'Δεν βρέθηκε στη βάση' και μετά δώσε τη γενική νομική σου γνώση.
                         
                         FORMAT:
                         [Απάντηση]
-                        
-                        [Κενή Γραμμή]
                         |||SOURCE:[DOC] (αν από PDF)
                         |||SOURCE:[DB] (αν από Βάση)
                         |||SOURCE:[AI] (αν Γενική Γνώση)
@@ -442,8 +474,7 @@ def main_app():
                     if c3.button("Email", key=f"e_{c['id']}"):
                         show_email_draft(c['name'], c['email'], c['debt'], str(c['deadline']), current_firm)
                     if c4.button("Εξοφλήθη", key=f"p_{c['id']}"):
-                        c["status"] = "Paid"
-                        st.rerun()
+                        c["status"] = "Paid"; st.rerun()
 
 if "logged_in" not in st.session_state: st.session_state['logged_in'] = False
 if not st.session_state['logged_in']: login_page()
