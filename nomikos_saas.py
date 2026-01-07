@@ -40,6 +40,8 @@ def local_css():
         .stTextInput input { border: 1px solid #cbd5e1; border-radius: 6px; }
         .stTabs [data-baseweb="tab-list"] { gap: 8px; background-color: #ffffff; padding: 10px; border-radius: 10px; }
         .stTabs [aria-selected="true"] { background-color: #eff6ff !important; color: #1e3a8a !important; }
+        /* Style for placeholders to look grey/low opacity */
+        ::placeholder { color: #a0aec0 !important; opacity: 1 !important; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -121,23 +123,6 @@ def clear_session(username):
         del sessions[username]
         with open(SESSION_FILE, 'w') as f: json.dump(sessions, f)
 
-def auto_genitive(name):
-    if not name: return ""
-    COMMON_NAMES_DB = {"ΧΡΗΣΤΟΣ": "Χρήστου", "ΠΕΡΟΝΤΣΗΣ": "Περόντση", "ΜΑΡΙΑ": "Μαρίας"}
-    parts = name.split()
-    gen_parts = []
-    article = "ΤΟΥ" 
-    if parts[0].endswith(('α', 'η', 'ω', 'Α', 'Η', 'Ω')): article = "ΤΗΣ"
-    for w in parts:
-        w_upper = w.upper()
-        if w_upper in COMMON_NAMES_DB: gen_parts.append(COMMON_NAMES_DB[w_upper])
-        elif w_upper.endswith('ΟΣ'): gen_parts.append(w[:-2] + 'ου')
-        elif w_upper.endswith('ΗΣ'): gen_parts.append(w[:-2] + 'η')
-        elif w_upper.endswith('ΑΣ'): gen_parts.append(w[:-1])
-        elif w_upper.endswith(('Α', 'Η', 'Ω')): gen_parts.append(w + 'ς')
-        else: gen_parts.append(w)
-    return f"{article} {' '.join(gen_parts)}"
-
 @st.dialog("Προσχέδιο Email")
 def show_email_draft(case_name, case_email, case_debt, case_deadline, firm_name):
     st.markdown("### Επίσημη Ειδοποίηση")
@@ -185,7 +170,7 @@ def login_page():
                             if create_user(new_u, new_p, firm):
                                 st.success("Επιτυχής Εγγραφή! Τώρα μπορείτε να συνδεθείτε.")
                             else:
-                                st.error("Το Username υπάρχει ήδη ή η Βάση Δεδομένων δεν είναι συνδεδεμένη.")
+                                st.error("Το Username υπάρχει ήδη.")
 
 # --- 4. MAIN APPLICATION ---
 def main_app():
@@ -253,7 +238,7 @@ def main_app():
 
     st.title("🗂️ Νομικός Φάκελος")
     
-    t1, t2, t3, t4, t5, t6 = st.tabs(["Αρχειοθέτηση", "Διαχείριση Αρχείων", "Εργαλεία", "Νομικός Βοηθός", "Αυτόματη Σύνταξη", "Διαχείριση Εξώσεων"])
+    t1, t2, t3, t4, t5, t6 = st.tabs(["Αρχειοθέτηση", "X-Ray Debugger", "Εργαλεία", "Νομικός Βοηθός", "Αυτόματη Σύνταξη", "Διαχείριση Εξώσεων"])
     
     with t1:
         st.header("Εισαγωγή Νέων Εγγράφων")
@@ -261,9 +246,7 @@ def main_app():
             st.info("🔓 **ADMIN MODE**: Τα αρχεία που ανεβάζετε εδώ θα είναι ορατά σε ΟΛΟΥΣ τους χρήστες (Public Library).")
         
         with st.container():
-            # ACCEPT JSON AND PDF
             files = st.file_uploader("Επιλέξτε αρχεία (PDF ή JSON)", type=["pdf", "json"], accept_multiple_files=True, key="uploader")
-            
             if st.button("🔒 Αποθήκευση στη Βάση", key="btn_upload") and files:
                 with st.spinner("Επεξεργασία & Καταχώρηση..."):
                     for f in files:
@@ -271,7 +254,6 @@ def main_app():
                             clean_name = f.name
                             upload_type = "public" if "ADMIN" in current_firm else "private"
                             target_id = "Public_Legal_Library" if "ADMIN" in current_firm else current_firm
-
                             try:
                                 pc = Pinecone(api_key=st.secrets["PINECONE_API_KEY"])
                                 pc.Index(index_name).delete(filter={"firm_id": target_id, "file_name": clean_name})
@@ -280,35 +262,17 @@ def main_app():
                             if f.name.endswith(".json"):
                                 try:
                                     raw_text = f.read().decode("utf-8").strip()
-                                    if raw_text.startswith("{") and not raw_text.startswith("["):
-                                        raw_text = f"[{raw_text}]"
-                                    
+                                    if raw_text.startswith("{") and not raw_text.startswith("["): raw_text = f"[{raw_text}]"
                                     data = json.loads(raw_text)
                                     if isinstance(data, dict): data = [data]
-                                    
                                     docs_to_upload = []
                                     for entry in data:
-                                        d = Document(
-                                            page_content=entry["text"],
-                                            metadata={
-                                                "firm_id": target_id,
-                                                "source_type": upload_type,
-                                                "file_name": clean_name, 
-                                                "article_id": entry["id"]
-                                            }
-                                        )
+                                        d = Document(page_content=entry["text"], metadata={"firm_id": target_id, "source_type": upload_type, "file_name": clean_name, "article_id": entry["id"]})
                                         docs_to_upload.append(d)
-                                    
                                     if docs_to_upload:
                                         PineconeVectorStore.from_documents(docs_to_upload, embeddings, index_name=index_name)
-                                        st.success(f"✅ JSON '{clean_name}' uploaded successfully ({len(docs_to_upload)} articles).")
-                                    else:
-                                        st.warning("JSON file was empty.")
-
-                                except json.JSONDecodeError as e:
-                                    st.error(f"JSON Error: {e}. Please ensure the file is valid JSON.")
-                                    continue
-
+                                        st.success(f"✅ JSON '{clean_name}' uploaded successfully.")
+                                except Exception as e: st.error(f"JSON Error: {e}")
                             elif f.name.endswith(".pdf"):
                                 with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
                                     tmp.write(f.read())
@@ -332,30 +296,29 @@ def main_app():
                                     PineconeVectorStore.from_documents(docs_to_upload, embeddings, index_name=index_name)
                                     st.success(f"✅ PDF '{clean_name}' uploaded successfully.")
                                 os.unlink(path)
-                                
                         except Exception as e: st.error(f"Error processing {f.name}: {e}")
 
     with t2:
-        st.header("Διαχείριση Εγγράφων & Έλεγχος")
+        st.header("X-Ray Database Debugger")
         col1, col2 = st.columns([3, 1])
         q = col1.text_input("Αναζήτηση (π.χ. 'Άρθρο 125')", key="file_search_input")
-        if col2.button("Αναζήτηση", key="btn_file_search"):
-            vs = PineconeVectorStore(index_name=index_name, embedding=embeddings)
-            target_ids = [current_firm, "Public_Legal_Library"]
-            res = vs.similarity_search(q, k=10, filter={"firm_id": {"$in": target_ids}})
-            if not res: st.warning("Δεν βρέθηκαν αποτελέσματα.")
-            for i, d in enumerate(res):
-                fname = d.metadata.get("file_name", "Άγνωστο")
-                fid = d.metadata.get("firm_id")
-                art_tag = f" [Art. {d.metadata.get('article_id')}]" if d.metadata.get('article_id') else ""
-                with st.expander(f"{i+1}. {fname}{art_tag} ({'PUBLIC' if 'Public' in fid else 'PRIVATE'})"):
-                    st.text(d.page_content)
-                    if "Public" in fid and "ADMIN" not in current_firm: st.caption("🔒 Read-only (Public Library)")
-                    else:
-                        if st.button("Διαγραφή", key=f"del_{i}"):
-                            pc = Pinecone(api_key=st.secrets["PINECONE_API_KEY"])
-                            pc.Index(index_name).delete(filter={"firm_id": fid, "file_name": fname})
-                            st.toast("Deleted"); st.rerun()
+        if st.checkbox("🔍 Debug Mode"):
+            if col2.button("Αναζήτηση (Global)", key="btn_debug_search"):
+                vs = PineconeVectorStore(index_name=index_name, embedding=embeddings)
+                res = vs.similarity_search(q, k=10) 
+                if not res: st.warning("Database is empty.")
+                for i, d in enumerate(res):
+                    st.markdown(f"**Result {i+1}:** `{d.metadata.get('file_name')}` | Firm: `{d.metadata.get('firm_id')}` | Art: `{d.metadata.get('article_id')}`")
+                    st.text(d.page_content[:200] + "...")
+        else:
+            if col2.button("Αναζήτηση", key="btn_file_search"):
+                vs = PineconeVectorStore(index_name=index_name, embedding=embeddings)
+                target_ids = [current_firm, "Public_Legal_Library"]
+                res = vs.similarity_search(q, k=10, filter={"firm_id": {"$in": target_ids}})
+                if not res: st.warning("Δεν βρέθηκαν αποτελέσματα.")
+                for i, d in enumerate(res):
+                    with st.expander(f"{i+1}. {d.metadata.get('file_name')} ({d.metadata.get('firm_id')})"):
+                        st.text(d.page_content)
 
     with t3:
         st.header("Νομικά Εργαλεία")
@@ -363,100 +326,118 @@ def main_app():
         if tc == "Μετάφραση":
             txt = st.text_area("Κείμενο προς μετάφραση:", key="trans_input")
             lang = st.selectbox("Γλώσσα:", ["English", "German", "French"], key="trans_lang")
-            if st.button("Εκτέλεση Μετάφρασης", key="btn_trans") and txt:
-                with st.spinner("Μετάφραση..."):
-                    res = llm.invoke(f"Act as Strict Legal Translator. Translate to {lang}. Output ONLY text. No notes.\nText: {txt}")
+            if st.button("Εκτέλεση", key="btn_trans") and txt:
+                with st.spinner("..."):
+                    res = llm.invoke(f"Translate to {lang}: {txt}")
                     st.write(res.content)
         else:
-            txt = st.text_area("Κείμενο με προσωπικά δεδομένα:", key="anon_input")
-            if st.button("Εκτέλεση Ανωνυμοποίησης", key="btn_anon") and txt:
-                with st.spinner("Επεξεργασία..."):
-                    res = llm.invoke(f"Act as GDPR Officer. Replace Names/AFM with placeholders [ΟΝΟΜΑ]. Output ONLY text.\nText: {txt}")
-                    st.code(res.content, language="text")
+            txt = st.text_area("Κείμενο:", key="anon_input")
+            if st.button("Εκτέλεση", key="btn_anon") and txt:
+                with st.spinner("..."):
+                    res = llm.invoke(f"Anonymize names/AFM in: {txt}")
+                    st.code(res.content)
 
     with t4:
         st.header("Νομικός Βοηθός AI")
         main_chat, side_context = st.columns([3, 1])
         with side_context:
-            st.info("📂 **Ενεργό Έγγραφο**")
-            uploaded_file = st.file_uploader("Προσθήκη Εγγράφου στη Συζήτηση", type="pdf", key="unified_pdf_uploader")
+            uploaded_file = st.file_uploader("Προσθήκη Εγγράφου", type="pdf", key="unified_pdf_uploader")
             if uploaded_file:
-                file_id = f"{uploaded_file.name}_{uploaded_file.size}"
-                if "current_pdf_id" not in st.session_state or st.session_state.current_pdf_id != file_id:
+                if "current_pdf_id" not in st.session_state or st.session_state.current_pdf_id != uploaded_file.name:
                     with st.spinner("Ανάγνωση..."):
-                        try:
-                            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp: tmp.write(uploaded_file.getvalue()); tmp_path = tmp.name
-                            loader = PyPDFLoader(tmp_path); docs = loader.load()
-                            full_text = "\n".join([d.page_content for d in docs])
-                            st.session_state.analysis_text = full_text; st.session_state.current_pdf_id = file_id; os.unlink(tmp_path)
-                        except: pass
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp: tmp.write(uploaded_file.getvalue()); tmp_path = tmp.name
+                        loader = PyPDFLoader(tmp_path); docs = loader.load()
+                        st.session_state.analysis_text = "\n".join([d.page_content for d in docs])
+                        st.session_state.current_pdf_id = uploaded_file.name
+                        os.unlink(tmp_path)
                 st.success(f"✅ {uploaded_file.name}")
-            else: st.session_state.analysis_text = ""; st.markdown("*Κανένα ενεργό έγγραφο.*")
+            else: st.session_state.analysis_text = ""
 
         with main_chat:
             for m in st.session_state.messages: st.chat_message(m["role"]).write(m["content"])
-            if prompt := st.chat_input("Πληκτρολογήστε την ερώτησή σας...", key="unified_chat"):
+            if prompt := st.chat_input("Ερώτηση...", key="unified_chat"):
                 st.session_state.messages.append({"role": "user", "content": prompt}); st.chat_message("user").write(prompt)
                 with st.chat_message("assistant"):
                     try:
                         vs = PineconeVectorStore(index_name=index_name, embedding=embeddings)
-                        target_ids = [current_firm, "Public_Legal_Library"]
-                        search_filter = {"firm_id": {"$in": target_ids}}
-
-                        # --- SMART ID FILTERING (The Magic Fix) ---
-                        # Detect "Article 126" or "Άρθρο 126" and force exact match
+                        search_filter = {"firm_id": {"$in": [current_firm, "Public_Legal_Library"]}}
                         match = re.search(r'(?:άρθρο|αρθρο|Article)\s*:?\s*(\d+)', prompt, re.IGNORECASE)
-                        if match:
-                            article_num = match.group(1)
-                            search_filter["article_id"] = {"$eq": article_num}
-                            # st.toast(f"🎯 Smart Search: Filtering for Article ID {article_num}")
-
+                        if match: search_filter["article_id"] = {"$eq": match.group(1)}
+                        
                         retriever = vs.as_retriever(search_kwargs={'filter': search_filter, 'k': 8})
                         db_docs = retriever.invoke(prompt)
-                        db_context = str(db_docs)
-                        pdf_context = st.session_state.analysis_text[:20000] if st.session_state.analysis_text else ""
-                        final_context = f"DATABASE RESULTS:\n{db_context}\n\nUPLOADED DOCUMENT:\n{pdf_context}"
+                        context = f"DB:\n{db_docs}\nDOC:\n{st.session_state.analysis_text[:20000]}"
                         
-                        system_prompt = """Είσαι ένας έμπειρος Νομικός Σύμβουλος.
+                        sys_prompt = "Είσαι Νομικός Σύμβουλος. Απάντησε βάσει των κειμένων. Αν δεν βρεις το άρθρο, πες το. Format output: [Answer]\n\n|||SOURCE:[TAG]"
+                        chain = ChatPromptTemplate.from_template(sys_prompt + "\nCTX:{context}\nQ:{question}") | llm | StrOutputParser()
+                        resp = chain.invoke({"context": context, "question": prompt})
                         
-                        ΟΔΗΓΙΕΣ:
-                        1. Αν ρωτάνε για ΣΥΓΚΕΚΡΙΜΕΝΟ ΑΡΘΡΟ, ΨΑΞΕ το κείμενο στα 'DATABASE RESULTS'.
-                        2. Αν το βρεις, παράθεσέ το ακριβώς.
-                        3. Αν ΔΕΝ το βρεις, ΠΡΟΣΕΧΕ: Μην μαντέψεις το κείμενο του νόμου. Πες 'Δεν βρέθηκε στη βάση' και μετά δώσε τη γενική νομική σου γνώση.
+                        if "|||SOURCE:" in resp: ans, tag = resp.split("|||SOURCE:")
+                        else: ans, tag = resp, ""
                         
-                        FORMAT:
-                        [Απάντηση]
-                        |||SOURCE:[DOC] (αν από PDF)
-                        |||SOURCE:[DB] (αν από Βάση)
-                        |||SOURCE:[AI] (αν Γενική Γνώση)
-                        
-                        CONTEXT: {context}
-                        QUESTION: {question}"""
-                        
-                        chain = ChatPromptTemplate.from_template(system_prompt) | llm | StrOutputParser()
-                        full_response = chain.invoke({"context": final_context, "question": prompt})
-                        if "|||SOURCE:" in full_response: ans, source_tag = full_response.split("|||SOURCE:")
-                        else: ans, source_tag = full_response, "[UNKNOWN]"
-                        
-                        st.write(ans.strip()); st.session_state.messages.append({"role": "assistant", "content": ans.strip()})
-                        with st.expander("Πηγές & Δεδομένα"):
-                            if "[AI]" in source_tag: st.info("🧠 **AI Knowledge / Not Found in DB**")
-                            elif "[DOC]" in source_tag: st.success("📄 **Uploaded Document**")
-                            elif "[DB]" in source_tag: 
-                                st.markdown("🗄️ **Βάση Δεδομένων (Public & Private):**")
-                                for i, doc in enumerate(db_docs):
-                                    fname = doc.metadata.get("file_name", "Unknown")
-                                    art = f"[Art. {doc.metadata.get('article_id')}]" if doc.metadata.get('article_id') else ""
-                                    st.caption(f"{i+1}. {fname} {art}")
+                        st.write(ans.strip())
+                        st.session_state.messages.append({"role": "assistant", "content": ans.strip()})
+                        with st.expander("Πηγές"):
+                            if db_docs: st.caption(f"Βάση: {[d.metadata.get('article_id') for d in db_docs]}")
                     except Exception as e: st.error(f"Error: {e}")
 
+    # --- TAB 5: AI-POWERED LEGAL DRAFTING ---
     with t5:
-        st.subheader("Αυτόματη Σύνταξη Εξωδίκου")
-        with st.form("draft"):
-            c1, c2, c3 = st.columns(3); l_name = c1.text_input("Εκμισθωτής", key="l_name"); l_father = c2.text_input("Πατρώνυμο", key="l_father"); l_afm = c3.text_input("ΑΦΜ", key="l_afm")
-            l_addr = st.text_input("Διεύθυνση", key="l_addr"); t1, t2, t3 = st.columns(3); t_name = t1.text_input("Μισθωτής", key="t_name"); t_father = t2.text_input("Πατρώνυμο", key="t_father")
-            t_afm = t3.text_input("ΑΦΜ", key="t_afm"); prop = st.text_input("Μίσθιο", key="prop_addr"); date = st.date_input("Ημ. Μίσθωσης", key="contr_date"); m1, m2 = st.columns(2); amt = m1.text_input("Ποσό", key="amt_val"); mths = m2.text_input("Μήνες", key="mths_val"); lawyer = st.text_input("Δικηγόρος", key="law_name"); dets = st.text_area("Στοιχεία Δικηγόρου", key="law_dets")
-            if st.form_submit_button("Δημιουργία Εγγράφου"): l_gen = auto_genitive(l_name); t_gen = auto_genitive(t_name); doc = f"""ΕΝΩΠΙΟΝ ΠΑΝΤΟΣ ΑΡΜΟΔΙΟΥ ΔΙΚΑΣΤΗΡΙΟΥ...\n\n{l_gen} {l_father}...\nΚΑΤΑ\n{t_gen} {t_father}...\n\n{lawyer}\n{dets}"""; st.code(doc, language="markdown")
+        st.subheader("Αυτόματη Σύνταξη Εξωδίκου (AI Draft)")
+        st.caption("Συμπληρώστε τα πεδία και το AI θα συντάξει το νομικό κείμενο.")
+
+        with st.form("eviction_draft_form"):
+            # Columns for layout
+            col_owner, col_tenant = st.columns(2)
+
+            with col_owner:
+                st.markdown("### 🏠 Εκμισθωτής (Ιδιοκτήτης)")
+                l_name = st.text_input("Ονοματεπώνυμο", placeholder="π.χ. Γεώργιος Παπαδόπουλος")
+                l_father = st.text_input("Πατρώνυμο (Ιδιοκτήτη)", placeholder="π.χ. του Δημητρίου")
+                l_afm = st.text_input("ΑΦΜ (Ιδιοκτήτη)", placeholder="π.χ. 000000000")
+                l_address = st.text_input("Διεύθυνση Κατοικίας", placeholder="π.χ. Εγνατία 10, Θεσσαλονίκη")
+
+            with col_tenant:
+                st.markdown("### 👤 Μισθωτής (Ενοικιαστής)")
+                t_name = st.text_input("Ονοματεπώνυμο", placeholder="π.χ. Νικόλαος Γεωργίου")
+                t_father = st.text_input("Πατρώνυμο (Μισθωτή)", placeholder="π.χ. του Κωνσταντίνου")
+                t_afm = st.text_input("ΑΦΜ (Μισθωτή)", placeholder="π.χ. 999999999")
+                t_address = st.text_input("Διεύθυνση Μισθίου (Ακινήτου)", placeholder="π.χ. Τσιμισκή 50, Θεσσαλονίκη")
+
+            st.markdown("### 💰 Στοιχεία Οφειλής")
+            c1, c2, c3 = st.columns(3)
+            rent_amount = c1.number_input("Μηνιαίο Μίσθωμα (€)", min_value=0.0, step=10.0, format="%.2f")
+            unpaid_months = c2.text_input("Μήνες Καθυστέρησης", placeholder="π.χ. Ιανουάριος & Φεβρουάριος 2024")
+            doc_date = c3.date_input("Ημερομηνία Εγγράφου", datetime.date.today())
+
+            submit_draft = st.form_submit_button("✍️ Σύνταξη Εγγράφου με AI")
+
+        if submit_draft:
+            if not l_name or not t_name:
+                st.warning("Παρακαλώ συμπληρώστε τουλάχιστον τα ονόματα.")
+            else:
+                with st.spinner("Ο Νομικός Βοηθός συντάσσει το έγγραφο..."):
+                    # Prompt engineering for the LLM
+                    draft_prompt = f"""
+                    Ενέργησε ως έμπειρος Έλληνας Δικηγόρος. Συνέταξε μια επίσημη ΕΞΩΔΙΚΗ ΔΗΛΩΣΗ - ΠΡΟΣΚΛΗΣΗ - ΔΙΑΜΑΡΤΥΡΙΑ.
+                    
+                    ΣΤΟΙΧΕΙΑ:
+                    Εκμισθωτής (Καλών): {l_name} {l_father}, ΑΦΜ {l_afm}, κάτοικος {l_address}.
+                    Μισθωτής (Καθ' ου): {t_name} {t_father}, ΑΦΜ {t_afm}, κάτοικος {t_address} (Μίσθιο).
+                    Μηνιαίο Μίσθωμα: {rent_amount} Ευρώ.
+                    Οφειλόμενοι Μήνες: {unpaid_months}.
+                    Ημερομηνία: {doc_date}.
+
+                    ΟΔΗΓΙΕΣ:
+                    1. Γράψε ένα πλήρες, νομικά ορθό κείμενο.
+                    2. Ανάφερε ότι ο μισθωτής δυστροπεί περί την καταβολή των μισθωμάτων.
+                    3. Κάλεσε τον να πληρώσει εντός 15 ημερών (άρθρο 597 ΑΚ ή 637 ΚΠολΔ για διαταγή απόδοσης), άλλως θα ασκηθούν νομικά μέσα (έξωση).
+                    4. Χρησιμοποίησε αυστηρό, επίσημο νομικό ύφος.
+                    """
+                    
+                    response = llm.invoke(draft_prompt)
+                    st.markdown("### 📄 Παραγόμενο Έγγραφο")
+                    st.text_area("Αντιγραφή Κειμένου:", value=response.content, height=600)
 
     with t6:
         st.subheader("Παρακολούθηση Προθεσμιών")
