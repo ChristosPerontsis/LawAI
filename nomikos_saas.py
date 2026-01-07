@@ -57,11 +57,11 @@ def hash_password(password):
     return hashlib.sha256(str.encode(password)).hexdigest()
 
 def load_user_data(username):
-    # 1. Hardcoded Admin
+    # 1. Hardcoded Admin (This guarantees access even if DB/File fails)
     if username == "admin":
         return {"pass": hash_password("admin"), "firm_id": "ADMIN_Δημόσια_Βιβλιοθήκη", "role": "admin"}
-    
-    # 2. Try DB
+
+    # 2. Try Cloud DB
     engine = get_db_connection()
     if engine:
         try:
@@ -419,7 +419,7 @@ def main_app():
                                     st.caption(f"{i+1}. {fname} {art}")
                     except Exception as e: st.error(f"Error: {e}")
 
-    # --- TAB 5: FIXED TEMPLATE PROMPT ---
+    # --- TAB 5: FIXED TEMPLATE PROMPT & SAFETY CATCH ---
     with t5:
         st.subheader("Αυτόματη Σύνταξη Εξωδίκου")
         st.caption("Συμπληρώστε τα στοιχεία και το σύστημα θα παραγάγει ένα αυστηρά δομημένο νομικό έγγραφο.")
@@ -452,31 +452,34 @@ def main_app():
             if not l_name or not t_name:
                 st.warning("Παρακαλώ συμπληρώστε τουλάχιστον τα ονόματα.")
             else:
-                with st.spinner("Δημιουργία Εγγράφου..."):
-                    # THE ONE-SHOT PROMPT (Template based)
-                    draft_prompt = f"""
-                    Ενέργησε ως έμπειρος Έλληνας Δικηγόρος.
-                    Στόχος: Σύνταξε μια επίσημη ΕΞΩΔΙΚΗ ΔΗΛΩΣΗ - ΠΡΟΣΚΛΗΣΗ - ΔΙΑΜΑΡΤΥΡΙΑ.
-                    
-                    ΔΕΔΟΜΕΝΑ:
-                    - Εκμισθωτής (Καλών): {l_name} {l_father}, ΑΦΜ {l_afm}, κάτοικος {l_address}.
-                    - Μισθωτής (Καθ' ου): {t_name} {t_father}, ΑΦΜ {t_afm}, κάτοικος {t_address} (Μίσθιο).
-                    - Ποσό Μισθώματος: {rent_amount} Ευρώ.
-                    - Οφειλόμενοι Μήνες: {unpaid_months}.
-                    - Ημερομηνία: {doc_date}.
+                try:
+                    with st.spinner("Δημιουργία Εγγράφου..."):
+                        # THE ONE-SHOT PROMPT (Template based)
+                        draft_prompt = f"""
+                        Ενέργησε ως έμπειρος Έλληνας Δικηγόρος.
+                        Στόχος: Σύνταξε μια επίσημη ΕΞΩΔΙΚΗ ΔΗΛΩΣΗ - ΠΡΟΣΚΛΗΣΗ - ΔΙΑΜΑΡΤΥΡΙΑ.
+                        
+                        ΔΕΔΟΜΕΝΑ:
+                        - Εκμισθωτής (Καλών): {l_name} {l_father}, ΑΦΜ {l_afm}, κάτοικος {l_address}.
+                        - Μισθωτής (Καθ' ου): {t_name} {t_father}, ΑΦΜ {t_afm}, κάτοικος {t_address} (Μίσθιο).
+                        - Ποσό Μισθώματος: {rent_amount} Ευρώ.
+                        - Οφειλόμενοι Μήνες: {unpaid_months}.
+                        - Ημερομηνία: {doc_date}.
 
-                    ΟΔΗΓΙΕΣ ΜΟΡΦΟΠΟΙΗΣΗΣ (ΑΚΟΛΟΥΘΗΣΕ ΑΥΣΤΗΡΑ):
-                    1. Ξεκίνα το έγγραφο ΑΚΡΙΒΩΣ με τη φράση: "ΕΝΩΠΙΟΝ ΠΑΝΤΟΣ ΑΡΜΟΔΙΟΥ ΔΙΚΑΣΤΗΡΙΟΥ ΚΑΙ ΠΑΣΗΣ ΑΡΧΗΣ".
-                    2. Τίτλος: "ΕΞΩΔΙΚΗ ΔΗΛΩΣΗ - ΠΡΟΣΚΛΗΣΗ - ΔΙΑΜΑΡΤΥΡΙΑ ΜΕ ΕΠΙΦΥΛΑΞΗ ΔΙΚΑΙΩΜΑΤΩΝ".
-                    3. Μην γράψεις εισαγωγές τύπου "Ορίστε το έγγραφο". Δώσε μόνο το καθαρό νομικό κείμενο.
-                    4. Χρησιμοποίησε επίσημη, νομική γλώσσα (καθαρεύουσα όπου είθισται, π.χ. "κοινοποιουμένη", "αιτούμαι").
-                    5. Ανάφερε ρητά την προθεσμία των 15 ημερών (άρθρο 637 ΚΠολΔ / 597 ΑΚ).
-                    6. Κλείσε με τόπο, ημερομηνία και "Ο Πληρεξούσιος Δικηγόρος".
-                    """
-                    
-                    response = llm.invoke(draft_prompt)
-                    st.markdown("### 📄 Παραγόμενο Έγγραφο")
-                    st.text_area("Αντιγραφή Κειμένου (Copy-Paste σε Word):", value=response.content, height=600)
+                        ΟΔΗΓΙΕΣ ΜΟΡΦΟΠΟΙΗΣΗΣ (ΑΚΟΛΟΥΘΗΣΕ ΑΥΣΤΗΡΑ):
+                        1. Ξεκίνα το έγγραφο ΑΚΡΙΒΩΣ με τη φράση: "ΕΝΩΠΙΟΝ ΠΑΝΤΟΣ ΑΡΜΟΔΙΟΥ ΔΙΚΑΣΤΗΡΙΟΥ ΚΑΙ ΠΑΣΗΣ ΑΡΧΗΣ".
+                        2. Τίτλος: "ΕΞΩΔΙΚΗ ΔΗΛΩΣΗ - ΠΡΟΣΚΛΗΣΗ - ΔΙΑΜΑΡΤΥΡΙΑ ΜΕ ΕΠΙΦΥΛΑΞΗ ΔΙΚΑΙΩΜΑΤΩΝ".
+                        3. Μην γράψεις εισαγωγές τύπου "Ορίστε το έγγραφο". Δώσε μόνο το καθαρό νομικό κείμενο.
+                        4. Χρησιμοποίησε επίσημη, νομική γλώσσα (καθαρεύουσα όπου είθισται, π.χ. "κοινοποιουμένη", "αιτούμαι").
+                        5. Ανάφερε ρητά την προθεσμία των 15 ημερών (άρθρο 637 ΚΠολΔ / 597 ΑΚ).
+                        6. Κλείσε με τόπο, ημερομηνία και "Ο Πληρεξούσιος Δικηγόρος".
+                        """
+                        
+                        response = llm.invoke(draft_prompt)
+                        st.markdown("### 📄 Παραγόμενο Έγγραφο")
+                        st.text_area("Αντιγραφή Κειμένου (Copy-Paste σε Word):", value=response.content, height=600)
+                except Exception as e:
+                    st.error(f"Σφάλμα κατά τη δημιουργία: {e}")
 
     with t6:
         st.subheader("Παρακολούθηση Προθεσμιών")
