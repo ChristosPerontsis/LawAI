@@ -40,7 +40,7 @@ def local_css():
         .stTextInput input { border: 1px solid #cbd5e1; border-radius: 6px; }
         .stTabs [data-baseweb="tab-list"] { gap: 8px; background-color: #ffffff; padding: 10px; border-radius: 10px; }
         .stTabs [aria-selected="true"] { background-color: #eff6ff !important; color: #1e3a8a !important; }
-        /* Style for placeholders to look grey/low opacity */
+        /* Placeholder styling */
         ::placeholder { color: #a0aec0 !important; opacity: 1 !important; }
     </style>
     """, unsafe_allow_html=True)
@@ -122,6 +122,23 @@ def clear_session(username):
     if username in sessions:
         del sessions[username]
         with open(SESSION_FILE, 'w') as f: json.dump(sessions, f)
+
+def auto_genitive(name):
+    if not name: return ""
+    COMMON_NAMES_DB = {"ΧΡΗΣΤΟΣ": "Χρήστου", "ΠΕΡΟΝΤΣΗΣ": "Περόντση", "ΜΑΡΙΑ": "Μαρίας"}
+    parts = name.split()
+    gen_parts = []
+    article = "ΤΟΥ" 
+    if parts[0].endswith(('α', 'η', 'ω', 'Α', 'Η', 'Ω')): article = "ΤΗΣ"
+    for w in parts:
+        w_upper = w.upper()
+        if w_upper in COMMON_NAMES_DB: gen_parts.append(COMMON_NAMES_DB[w_upper])
+        elif w_upper.endswith('ΟΣ'): gen_parts.append(w[:-2] + 'ου')
+        elif w_upper.endswith('ΗΣ'): gen_parts.append(w[:-2] + 'η')
+        elif w_upper.endswith('ΑΣ'): gen_parts.append(w[:-1])
+        elif w_upper.endswith(('Α', 'Η', 'Ω')): gen_parts.append(w + 'ς')
+        else: gen_parts.append(w)
+    return f"{article} {' '.join(gen_parts)}"
 
 @st.dialog("Προσχέδιο Email")
 def show_email_draft(case_name, case_email, case_debt, case_deadline, firm_name):
@@ -326,16 +343,16 @@ def main_app():
         if tc == "Μετάφραση":
             txt = st.text_area("Κείμενο προς μετάφραση:", key="trans_input")
             lang = st.selectbox("Γλώσσα:", ["English", "German", "French"], key="trans_lang")
-            if st.button("Εκτέλεση", key="btn_trans") and txt:
-                with st.spinner("..."):
-                    res = llm.invoke(f"Translate to {lang}: {txt}")
+            if st.button("Εκτέλεση Μετάφρασης", key="btn_trans") and txt:
+                with st.spinner("Μετάφραση..."):
+                    res = llm.invoke(f"Act as Strict Legal Translator. Translate to {lang}. Output ONLY text. No notes.\nText: {txt}")
                     st.write(res.content)
         else:
-            txt = st.text_area("Κείμενο:", key="anon_input")
-            if st.button("Εκτέλεση", key="btn_anon") and txt:
-                with st.spinner("..."):
-                    res = llm.invoke(f"Anonymize names/AFM in: {txt}")
-                    st.code(res.content)
+            txt = st.text_area("Κείμενο με προσωπικά δεδομένα:", key="anon_input")
+            if st.button("Εκτέλεση Ανωνυμοποίησης", key="btn_anon") and txt:
+                with st.spinner("Επεξεργασία..."):
+                    res = llm.invoke(f"Act as GDPR Officer. Replace Names/AFM with placeholders [ΟΝΟΜΑ]. Output ONLY text.\nText: {txt}")
+                    st.code(res.content, language="text")
 
     with t4:
         st.header("Νομικός Βοηθός AI")
@@ -360,36 +377,55 @@ def main_app():
                 with st.chat_message("assistant"):
                     try:
                         vs = PineconeVectorStore(index_name=index_name, embedding=embeddings)
-                        search_filter = {"firm_id": {"$in": [current_firm, "Public_Legal_Library"]}}
+                        target_ids = [current_firm, "Public_Legal_Library"]
+                        search_filter = {"firm_id": {"$in": target_ids}}
                         match = re.search(r'(?:άρθρο|αρθρο|Article)\s*:?\s*(\d+)', prompt, re.IGNORECASE)
                         if match: search_filter["article_id"] = {"$eq": match.group(1)}
-                        
                         retriever = vs.as_retriever(search_kwargs={'filter': search_filter, 'k': 8})
                         db_docs = retriever.invoke(prompt)
-                        context = f"DB:\n{db_docs}\nDOC:\n{st.session_state.analysis_text[:20000]}"
+                        db_context = str(db_docs)
+                        pdf_context = st.session_state.analysis_text[:20000] if st.session_state.analysis_text else ""
+                        final_context = f"DATABASE RESULTS:\n{db_context}\n\nUPLOADED DOCUMENT:\n{pdf_context}"
                         
-                        sys_prompt = "Είσαι Νομικός Σύμβουλος. Απάντησε βάσει των κειμένων. Αν δεν βρεις το άρθρο, πες το. Format output: [Answer]\n\n|||SOURCE:[TAG]"
-                        chain = ChatPromptTemplate.from_template(sys_prompt + "\nCTX:{context}\nQ:{question}") | llm | StrOutputParser()
-                        resp = chain.invoke({"context": context, "question": prompt})
+                        system_prompt = """Είσαι ένας έμπειρος Νομικός Σύμβουλος.
+                        ΟΔΗΓΙΕΣ:
+                        1. Αν ρωτάνε για ΣΥΓΚΕΚΡΙΜΕΝΟ ΑΡΘΡΟ, ΨΑΞΕ το κείμενο στα 'DATABASE RESULTS'.
+                        2. Αν το βρεις, παράθεσέ το ακριβώς.
+                        3. Αν ΔΕΝ το βρεις, ΠΡΟΣΕΧΕ: Μην μαντέψεις το κείμενο του νόμου. Πες 'Δεν βρέθηκε στη βάση' και μετά δώσε τη γενική νομική σου γνώση.
                         
-                        if "|||SOURCE:" in resp: ans, tag = resp.split("|||SOURCE:")
-                        else: ans, tag = resp, ""
+                        FORMAT:
+                        [Απάντηση]
+                        |||SOURCE:[DOC] (αν από PDF)
+                        |||SOURCE:[DB] (αν από Βάση)
+                        |||SOURCE:[AI] (αν Γενική Γνώση)
                         
-                        st.write(ans.strip())
-                        st.session_state.messages.append({"role": "assistant", "content": ans.strip()})
-                        with st.expander("Πηγές"):
-                            if db_docs: st.caption(f"Βάση: {[d.metadata.get('article_id') for d in db_docs]}")
+                        CONTEXT: {context}
+                        QUESTION: {question}"""
+                        
+                        chain = ChatPromptTemplate.from_template(system_prompt) | llm | StrOutputParser()
+                        full_response = chain.invoke({"context": final_context, "question": prompt})
+                        if "|||SOURCE:" in full_response: ans, source_tag = full_response.split("|||SOURCE:")
+                        else: ans, source_tag = full_response, "[UNKNOWN]"
+                        
+                        st.write(ans.strip()); st.session_state.messages.append({"role": "assistant", "content": ans.strip()})
+                        with st.expander("Πηγές & Δεδομένα"):
+                            if "[AI]" in source_tag: st.info("🧠 **AI Knowledge / Not Found in DB**")
+                            elif "[DOC]" in source_tag: st.success("📄 **Uploaded Document**")
+                            elif "[DB]" in source_tag: 
+                                st.markdown("🗄️ **Βάση Δεδομένων (Public & Private):**")
+                                for i, doc in enumerate(db_docs):
+                                    fname = doc.metadata.get("file_name", "Unknown")
+                                    art = f"[Art. {doc.metadata.get('article_id')}]" if doc.metadata.get('article_id') else ""
+                                    st.caption(f"{i+1}. {fname} {art}")
                     except Exception as e: st.error(f"Error: {e}")
 
-    # --- TAB 5: AI-POWERED LEGAL DRAFTING ---
+    # --- TAB 5: FIXED TEMPLATE PROMPT ---
     with t5:
-        st.subheader("Αυτόματη Σύνταξη Εξωδίκου (AI Draft)")
-        st.caption("Συμπληρώστε τα πεδία και το AI θα συντάξει το νομικό κείμενο.")
+        st.subheader("Αυτόματη Σύνταξη Εξωδίκου")
+        st.caption("Συμπληρώστε τα στοιχεία και το σύστημα θα παραγάγει ένα αυστηρά δομημένο νομικό έγγραφο.")
 
         with st.form("eviction_draft_form"):
-            # Columns for layout
             col_owner, col_tenant = st.columns(2)
-
             with col_owner:
                 st.markdown("### 🏠 Εκμισθωτής (Ιδιοκτήτης)")
                 l_name = st.text_input("Ονοματεπώνυμο", placeholder="π.χ. Γεώργιος Παπαδόπουλος")
@@ -402,7 +438,7 @@ def main_app():
                 t_name = st.text_input("Ονοματεπώνυμο", placeholder="π.χ. Νικόλαος Γεωργίου")
                 t_father = st.text_input("Πατρώνυμο (Μισθωτή)", placeholder="π.χ. του Κωνσταντίνου")
                 t_afm = st.text_input("ΑΦΜ (Μισθωτή)", placeholder="π.χ. 999999999")
-                t_address = st.text_input("Διεύθυνση Μισθίου (Ακινήτου)", placeholder="π.χ. Τσιμισκή 50, Θεσσαλονίκη")
+                t_address = st.text_input("Διεύθυνση Μισθίου", placeholder="π.χ. Τσιμισκή 50, Θεσσαλονίκη")
 
             st.markdown("### 💰 Στοιχεία Οφειλής")
             c1, c2, c3 = st.columns(3)
@@ -410,34 +446,37 @@ def main_app():
             unpaid_months = c2.text_input("Μήνες Καθυστέρησης", placeholder="π.χ. Ιανουάριος & Φεβρουάριος 2024")
             doc_date = c3.date_input("Ημερομηνία Εγγράφου", datetime.date.today())
 
-            submit_draft = st.form_submit_button("✍️ Σύνταξη Εγγράφου με AI")
+            submit_draft = st.form_submit_button("✍️ Σύνταξη Εγγράφου")
 
         if submit_draft:
             if not l_name or not t_name:
                 st.warning("Παρακαλώ συμπληρώστε τουλάχιστον τα ονόματα.")
             else:
-                with st.spinner("Ο Νομικός Βοηθός συντάσσει το έγγραφο..."):
-                    # Prompt engineering for the LLM
+                with st.spinner("Δημιουργία Εγγράφου..."):
+                    # THE ONE-SHOT PROMPT (Template based)
                     draft_prompt = f"""
-                    Ενέργησε ως έμπειρος Έλληνας Δικηγόρος. Συνέταξε μια επίσημη ΕΞΩΔΙΚΗ ΔΗΛΩΣΗ - ΠΡΟΣΚΛΗΣΗ - ΔΙΑΜΑΡΤΥΡΙΑ.
+                    Ενέργησε ως έμπειρος Έλληνας Δικηγόρος.
+                    Στόχος: Σύνταξε μια επίσημη ΕΞΩΔΙΚΗ ΔΗΛΩΣΗ - ΠΡΟΣΚΛΗΣΗ - ΔΙΑΜΑΡΤΥΡΙΑ.
                     
-                    ΣΤΟΙΧΕΙΑ:
-                    Εκμισθωτής (Καλών): {l_name} {l_father}, ΑΦΜ {l_afm}, κάτοικος {l_address}.
-                    Μισθωτής (Καθ' ου): {t_name} {t_father}, ΑΦΜ {t_afm}, κάτοικος {t_address} (Μίσθιο).
-                    Μηνιαίο Μίσθωμα: {rent_amount} Ευρώ.
-                    Οφειλόμενοι Μήνες: {unpaid_months}.
-                    Ημερομηνία: {doc_date}.
+                    ΔΕΔΟΜΕΝΑ:
+                    - Εκμισθωτής (Καλών): {l_name} {l_father}, ΑΦΜ {l_afm}, κάτοικος {l_address}.
+                    - Μισθωτής (Καθ' ου): {t_name} {t_father}, ΑΦΜ {t_afm}, κάτοικος {t_address} (Μίσθιο).
+                    - Ποσό Μισθώματος: {rent_amount} Ευρώ.
+                    - Οφειλόμενοι Μήνες: {unpaid_months}.
+                    - Ημερομηνία: {doc_date}.
 
-                    ΟΔΗΓΙΕΣ:
-                    1. Γράψε ένα πλήρες, νομικά ορθό κείμενο.
-                    2. Ανάφερε ότι ο μισθωτής δυστροπεί περί την καταβολή των μισθωμάτων.
-                    3. Κάλεσε τον να πληρώσει εντός 15 ημερών (άρθρο 597 ΑΚ ή 637 ΚΠολΔ για διαταγή απόδοσης), άλλως θα ασκηθούν νομικά μέσα (έξωση).
-                    4. Χρησιμοποίησε αυστηρό, επίσημο νομικό ύφος.
+                    ΟΔΗΓΙΕΣ ΜΟΡΦΟΠΟΙΗΣΗΣ (ΑΚΟΛΟΥΘΗΣΕ ΑΥΣΤΗΡΑ):
+                    1. Ξεκίνα το έγγραφο ΑΚΡΙΒΩΣ με τη φράση: "ΕΝΩΠΙΟΝ ΠΑΝΤΟΣ ΑΡΜΟΔΙΟΥ ΔΙΚΑΣΤΗΡΙΟΥ ΚΑΙ ΠΑΣΗΣ ΑΡΧΗΣ".
+                    2. Τίτλος: "ΕΞΩΔΙΚΗ ΔΗΛΩΣΗ - ΠΡΟΣΚΛΗΣΗ - ΔΙΑΜΑΡΤΥΡΙΑ ΜΕ ΕΠΙΦΥΛΑΞΗ ΔΙΚΑΙΩΜΑΤΩΝ".
+                    3. Μην γράψεις εισαγωγές τύπου "Ορίστε το έγγραφο". Δώσε μόνο το καθαρό νομικό κείμενο.
+                    4. Χρησιμοποίησε επίσημη, νομική γλώσσα (καθαρεύουσα όπου είθισται, π.χ. "κοινοποιουμένη", "αιτούμαι").
+                    5. Ανάφερε ρητά την προθεσμία των 15 ημερών (άρθρο 637 ΚΠολΔ / 597 ΑΚ).
+                    6. Κλείσε με τόπο, ημερομηνία και "Ο Πληρεξούσιος Δικηγόρος".
                     """
                     
                     response = llm.invoke(draft_prompt)
                     st.markdown("### 📄 Παραγόμενο Έγγραφο")
-                    st.text_area("Αντιγραφή Κειμένου:", value=response.content, height=600)
+                    st.text_area("Αντιγραφή Κειμένου (Copy-Paste σε Word):", value=response.content, height=600)
 
     with t6:
         st.subheader("Παρακολούθηση Προθεσμιών")
